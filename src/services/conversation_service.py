@@ -84,19 +84,24 @@ async def _sync_thread_attachment_state(
         if not isinstance(existing_files, dict):
             existing_files = {}
 
-        attachment_files = _build_state_files(attachments)
-        merged_files = {
-            path: file_data
-            for path, file_data in existing_files.items()
-            if isinstance(path, str) and not path.startswith("/attachments/")
+        # 仅对 /attachments 命名空间做增量更新，避免覆盖 agent 运行期生成的其它文件。
+        next_attachment_files = _build_state_files(attachments)
+        prev_attachment_paths = {
+            path
+            for path in existing_files.keys()
+            if isinstance(path, str) and path.startswith("/attachments/")
         }
-        merged_files.update(attachment_files)
+        next_attachment_paths = set(next_attachment_files.keys())
+
+        file_updates: dict[str, dict | None] = {**next_attachment_files}
+        for removed_path in prev_attachment_paths - next_attachment_paths:
+            file_updates[removed_path] = None
 
         await graph.aupdate_state(
             config=config,
             values={
                 "attachments": attachments,
-                "files": merged_files,
+                "files": file_updates,
             },
         )
     except Exception as e:
