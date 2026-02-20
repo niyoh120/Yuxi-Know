@@ -37,11 +37,23 @@ def test_build_state_files_only_parsed_and_with_content():
 @pytest.mark.asyncio
 async def test_sync_thread_attachment_state_updates_graph(monkeypatch: pytest.MonkeyPatch):
     captured: dict = {}
+    fake_state = SimpleNamespace(
+        values={
+            "files": {
+                "/attachments/old.md": {"content": ["old"]},
+                "/work/result.md": {"content": ["keep"]},
+            }
+        }
+    )
 
     class FakeGraph:
+        async def aget_state(self, config):
+            captured["read_config"] = config
+            return fake_state
+
         async def aupdate_state(self, *, config, values):
-            captured["config"] = config
-            captured["values"] = values
+            captured["write_config"] = config
+            captured["write_values"] = values
 
     class FakeAgent:
         async def get_graph(self):
@@ -64,9 +76,12 @@ async def test_sync_thread_attachment_state_updates_graph(monkeypatch: pytest.Mo
         attachments=attachments,
     )
 
-    assert captured["config"] == {"configurable": {"thread_id": "thread-1", "user_id": "u1"}}
-    assert captured["values"]["attachments"] == attachments
-    assert "/attachments/resume.md" in captured["values"]["files"]
+    assert captured["read_config"] == {"configurable": {"thread_id": "thread-1", "user_id": "u1"}}
+    assert captured["write_config"] == {"configurable": {"thread_id": "thread-1", "user_id": "u1"}}
+    assert captured["write_values"]["attachments"] == attachments
+    assert "/attachments/resume.md" in captured["write_values"]["files"]
+    assert "/attachments/old.md" not in captured["write_values"]["files"]
+    assert "/work/result.md" in captured["write_values"]["files"]
 
 
 @pytest.mark.asyncio

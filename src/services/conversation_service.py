@@ -77,11 +77,26 @@ async def _sync_thread_attachment_state(
             return
 
         graph = await agent.get_graph()
+        config = {"configurable": {"thread_id": thread_id, "user_id": str(user_id)}}
+        state = await graph.aget_state(config)
+        state_values = getattr(state, "values", {}) if state else {}
+        existing_files = state_values.get("files", {}) if isinstance(state_values, dict) else {}
+        if not isinstance(existing_files, dict):
+            existing_files = {}
+
+        attachment_files = _build_state_files(attachments)
+        merged_files = {
+            path: file_data
+            for path, file_data in existing_files.items()
+            if isinstance(path, str) and not path.startswith("/attachments/")
+        }
+        merged_files.update(attachment_files)
+
         await graph.aupdate_state(
-            config={"configurable": {"thread_id": thread_id, "user_id": str(user_id)}},
+            config=config,
             values={
                 "attachments": attachments,
-                "files": _build_state_files(attachments),
+                "files": merged_files,
             },
         )
     except Exception as e:
