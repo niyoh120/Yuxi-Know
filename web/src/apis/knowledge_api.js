@@ -454,6 +454,15 @@ export const evaluationApi = {
   },
 
   /**
+   * 下载评估基准
+   * @param {string} benchmarkId - 基准ID
+   * @returns {Promise} - Response对象
+   */
+  downloadBenchmark: async (benchmarkId) => {
+    return apiAdminGet(`/api/evaluation/benchmarks/${benchmarkId}/download`, {}, 'blob')
+  },
+
+  /**
    * 自动生成评估基准
    * @param {string} dbId - 知识库ID
    * @param {Object} params - 生成参数
