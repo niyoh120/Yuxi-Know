@@ -15,10 +15,12 @@ from src.services.skill_service import (
     delete_skill,
     delete_skill_node,
     export_skill_zip,
+    get_skill_dependency_options,
     get_skill_tree,
     import_skill_zip,
     list_skills,
     read_skill_file,
+    update_skill_dependencies,
     update_skill_file,
 )
 from src.storage.postgres.models_business import User
@@ -36,6 +38,12 @@ class SkillNodeCreateRequest(BaseModel):
 class SkillFileUpdateRequest(BaseModel):
     path: str = Field(..., description="相对 skill 根目录的路径")
     content: str = Field(..., description="文件内容")
+
+
+class SkillDependenciesUpdateRequest(BaseModel):
+    tool_dependencies: list[str] = Field(default_factory=list, description="依赖的内置工具列表")
+    mcp_dependencies: list[str] = Field(default_factory=list, description="依赖的 MCP 服务列表")
+    skill_dependencies: list[str] = Field(default_factory=list, description="依赖的其他 skill slug 列表")
 
 
 def _raise_from_value_error(e: ValueError) -> None:
@@ -56,6 +64,18 @@ async def list_skills_route(
     except Exception as e:
         logger.error(f"Failed to list skills: {e}")
         raise HTTPException(status_code=500, detail="获取技能列表失败")
+
+
+@skills.get("/dependency-options")
+async def get_skill_dependency_options_route(
+    _current_user: User = Depends(get_superadmin_user),
+):
+    """获取 skill 依赖项可选列表（仅超级管理员）。"""
+    try:
+        return {"success": True, "data": get_skill_dependency_options()}
+    except Exception as e:
+        logger.error(f"Failed to get skill dependency options: {e}")
+        raise HTTPException(status_code=500, detail="获取 skill 依赖选项失败")
 
 
 @skills.post("/import")
@@ -173,6 +193,33 @@ async def update_skill_file_route(
     except Exception as e:
         logger.error(f"Failed to update skill file '{slug}/{payload.path}': {e}")
         raise HTTPException(status_code=500, detail="更新技能文件失败")
+
+
+@skills.put("/{slug}/dependencies")
+async def update_skill_dependencies_route(
+    slug: str,
+    payload: SkillDependenciesUpdateRequest,
+    current_user: User = Depends(get_superadmin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """更新 skill 依赖（仅超级管理员）。"""
+    try:
+        item = await update_skill_dependencies(
+            db,
+            slug=slug,
+            tool_dependencies=payload.tool_dependencies,
+            mcp_dependencies=payload.mcp_dependencies,
+            skill_dependencies=payload.skill_dependencies,
+            updated_by=current_user.username,
+        )
+        return {"success": True, "data": item.to_dict()}
+    except ValueError as e:
+        _raise_from_value_error(e)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to update skill dependencies '{slug}': {e}")
+        raise HTTPException(status_code=500, detail="更新 skill 依赖失败")
 
 
 @skills.delete("/{slug}/file")

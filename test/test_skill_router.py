@@ -97,3 +97,69 @@ def test_update_skill_file_passes_operator(monkeypatch):
     assert captured["slug"] == "demo"
     assert captured["relative_path"] == "SKILL.md"
     assert captured["updated_by"] == "root"
+
+
+def test_dependency_options_route(monkeypatch):
+    monkeypatch.setattr(
+        "server.routers.skill_router.get_skill_dependency_options",
+        lambda: {
+            "tools": ["calculator"],
+            "mcps": ["mcp-a"],
+            "skills": ["demo"],
+        },
+    )
+
+    app = _build_app(allow_superadmin=True)
+    client = TestClient(app)
+    resp = client.get("/api/system/skills/dependency-options")
+    assert resp.status_code == 200, resp.text
+    payload = resp.json()
+    assert payload["success"] is True
+    assert payload["data"]["tools"] == ["calculator"]
+
+
+def test_update_skill_dependencies_route(monkeypatch):
+    captured: dict[str, object] = {}
+
+    async def fake_update_skill_dependencies(
+        _db,
+        *,
+        slug,
+        tool_dependencies,
+        mcp_dependencies,
+        skill_dependencies,
+        updated_by,
+    ):
+        captured["slug"] = slug
+        captured["tool_dependencies"] = tool_dependencies
+        captured["mcp_dependencies"] = mcp_dependencies
+        captured["skill_dependencies"] = skill_dependencies
+        captured["updated_by"] = updated_by
+        return Skill(
+            slug=slug,
+            name=slug,
+            description="demo",
+            dir_path=f"skills/{slug}",
+            tool_dependencies=tool_dependencies,
+            mcp_dependencies=mcp_dependencies,
+            skill_dependencies=skill_dependencies,
+        )
+
+    monkeypatch.setattr("server.routers.skill_router.update_skill_dependencies", fake_update_skill_dependencies)
+
+    app = _build_app(allow_superadmin=True)
+    client = TestClient(app)
+    resp = client.put(
+        "/api/system/skills/demo/dependencies",
+        json={
+            "tool_dependencies": ["calculator"],
+            "mcp_dependencies": ["mcp-a"],
+            "skill_dependencies": ["other-skill"],
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    assert captured["slug"] == "demo"
+    assert captured["tool_dependencies"] == ["calculator"]
+    assert captured["mcp_dependencies"] == ["mcp-a"]
+    assert captured["skill_dependencies"] == ["other-skill"]
+    assert captured["updated_by"] == "root"

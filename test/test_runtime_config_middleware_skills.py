@@ -5,7 +5,8 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from langchain_core.messages import SystemMessage
+from langchain_core.messages import SystemMessage, ToolMessage
+from langgraph.types import Command
 
 import src.agents.common.middlewares.runtime_config_middleware as runtime_middleware
 from src.agents.common.middlewares.runtime_config_middleware import RuntimeConfigMiddleware
@@ -22,12 +23,14 @@ class _FakeRequest:
     runtime: Any
     tools: list[Any]
     system_message: SystemMessage
+    state: dict[str, Any]
 
     def override(self, **kwargs):
         return _FakeRequest(
             runtime=kwargs.get("runtime", self.runtime),
             tools=kwargs.get("tools", self.tools),
             system_message=kwargs.get("system_message", self.system_message),
+            state=kwargs.get("state", self.state),
         )
 
 
@@ -42,6 +45,7 @@ def _build_request(*, skills: list[str], tools: list[str], system_prompt: str = 
         runtime=runtime,
         tools=[_FakeTool(name=name) for name in tools],
         system_message=SystemMessage(content=[{"type": "text", "text": "base"}]),
+        state={},
     )
 
 
@@ -56,6 +60,11 @@ def _build_middleware() -> RuntimeConfigMiddleware:
         enable_system_prompt_override=True,
         enable_skills_prompt_override=True,
     )
+
+
+@dataclass
+class _FakeToolCallRequest:
+    tool_call: dict[str, Any]
 
 
 @pytest.mark.asyncio
@@ -154,3 +163,89 @@ async def test_injects_skills_in_input_order_with_dedup_and_invalid_slug_skipped
     assert prompt.find(beta_line) < prompt.find(alpha_line)
     assert prompt.count(beta_line) == 1
     assert "missing" not in prompt
+
+
+@pytest.mark.asyncio
+async def test_awrap_tool_call_activates_skill_when_read_skill_md():
+    middleware = _build_middleware()
+    request = _FakeToolCallRequest(
+        tool_call={
+            "name": "read_file",
+            "args": {"file_path": "/skills/research-report/SKILL.md"},
+        }
+    )
+
+    async def _handler(_request):
+        return ToolMessage(content="ok", tool_call_id="tc-1")
+
+    result = await middleware.awrap_tool_call(request, _handler)
+    assert isinstance(result, Command)
+    assert result.update["activated_skills"] == ["research-report"]
+    assert len(result.update["messages"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_awrap_tool_call_merges_with_existing_command_update():
+    middleware = _build_middleware()
+    request = _FakeToolCallRequest(
+        tool_call={
+            "name": "read_file",
+            "args": {"file_path": "/skills/research-report/SKILL.md"},
+        }
+    )
+
+    async def _handler(_request):
+        return Command(update={"messages": [ToolMessage(content="ok", tool_call_id="tc-1")], "activated_skills": ["a"]})
+
+    result = await middleware.awrap_tool_call(request, _handler)
+    assert isinstance(result, Command)
+    assert result.update["activated_skills"] == ["a", "research-report"]
+
+
+@pytest.mark.asyncio
+async def test_model_call_injects_dependency_tools_and_mcps_after_activation(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(
+        runtime_middleware,
+        "get_buildin_tools",
+        lambda: [_FakeTool(name="calculator"), _FakeTool(name="dep-tool")],
+    )
+    monkeypatch.setattr(runtime_middleware, "get_kb_based_tools", lambda db_names=None: [])
+    monkeypatch.setattr(
+        runtime_middleware,
+        "get_dependency_bundle_for_activated_skills",
+        lambda activated: {"tools": ["dep-tool"], "mcps": ["mcp-a"], "skills": activated},
+    )
+
+    async def fake_get_enabled_mcp_tools(server_name: str):
+        if server_name == "mcp-a":
+            return [_FakeTool(name="mcp_tool")]
+        return []
+
+    monkeypatch.setattr(runtime_middleware, "get_enabled_mcp_tools", fake_get_enabled_mcp_tools)
+
+    middleware = RuntimeConfigMiddleware(
+        extra_tools=[_FakeTool(name="mcp_tool")],
+        enable_model_override=False,
+        enable_tools_override=True,
+        enable_system_prompt_override=False,
+        enable_skills_prompt_override=False,
+    )
+
+    context = SimpleNamespace(system_prompt="x", skills=[], tools=[], knowledges=[], mcps=[])
+    request = _FakeRequest(
+        runtime=SimpleNamespace(context=context),
+        tools=[
+            _FakeTool(name="calculator"),
+            _FakeTool(name="dep-tool"),
+            _FakeTool(name="mcp_tool"),
+            _FakeTool(name="read_file"),
+        ],
+        system_message=SystemMessage(content=[{"type": "text", "text": "base"}]),
+        state={"activated_skills": ["alpha"]},
+    )
+
+    result = await middleware.awrap_model_call(request, _echo_handler)
+    tool_names = [t.name for t in result.tools]
+    assert "dep-tool" in tool_names
+    assert "mcp_tool" in tool_names
+    assert "calculator" not in tool_names

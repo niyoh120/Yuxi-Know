@@ -180,6 +180,9 @@ class Skill(Base):
     slug = Column(String(128), nullable=False, unique=True, index=True, comment="技能唯一标识（目录名）")
     name = Column(String(128), nullable=False, comment="技能名称（来自 SKILL.md frontmatter.name）")
     description = Column(Text, nullable=False, comment="技能描述（来自 SKILL.md frontmatter.description）")
+    tool_dependencies = Column(JSON, nullable=False, default=list, comment="依赖的内置工具名列表")
+    mcp_dependencies = Column(JSON, nullable=False, default=list, comment="依赖的 MCP 服务名列表")
+    skill_dependencies = Column(JSON, nullable=False, default=list, comment="依赖的其他 skill slug 列表")
     dir_path = Column(String(512), nullable=False, comment="技能目录路径（相对 save_dir）")
     created_by = Column(String(64), nullable=True)
     updated_by = Column(String(64), nullable=True)
@@ -192,6 +195,9 @@ class Skill(Base):
             "slug": self.slug,
             "name": self.name,
             "description": self.description,
+            "tool_dependencies": self.tool_dependencies or [],
+            "mcp_dependencies": self.mcp_dependencies or [],
+            "skill_dependencies": self.skill_dependencies or [],
             "dir_path": self.dir_path,
             "created_by": self.created_by,
             "updated_by": self.updated_by,

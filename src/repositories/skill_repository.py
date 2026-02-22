@@ -28,6 +28,9 @@ class SkillRepository:
         slug: str,
         name: str,
         description: str,
+        tool_dependencies: list[str] | None,
+        mcp_dependencies: list[str] | None,
+        skill_dependencies: list[str] | None,
         dir_path: str,
         created_by: str | None,
     ) -> Skill:
@@ -36,6 +39,9 @@ class SkillRepository:
             slug=slug,
             name=name,
             description=description,
+            tool_dependencies=tool_dependencies or [],
+            mcp_dependencies=mcp_dependencies or [],
+            skill_dependencies=skill_dependencies or [],
             dir_path=dir_path,
             created_by=created_by,
             updated_by=created_by,
@@ -43,6 +49,24 @@ class SkillRepository:
             updated_at=now,
         )
         self.db.add(item)
+        await self.db.commit()
+        await self.db.refresh(item)
+        return item
+
+    async def update_dependencies(
+        self,
+        item: Skill,
+        *,
+        tool_dependencies: list[str],
+        mcp_dependencies: list[str],
+        skill_dependencies: list[str],
+        updated_by: str | None,
+    ) -> Skill:
+        item.tool_dependencies = tool_dependencies
+        item.mcp_dependencies = mcp_dependencies
+        item.skill_dependencies = skill_dependencies
+        item.updated_by = updated_by
+        item.updated_at = utc_now_naive()
         await self.db.commit()
         await self.db.refresh(item)
         return item

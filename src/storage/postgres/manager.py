@@ -164,6 +164,18 @@ class PostgresManager(metaclass=SingletonMeta):
             for stmt in stmts:
                 await conn.execute(text(stmt))
 
+    async def ensure_business_schema(self):
+        """确保业务 schema 包含后续新增字段（兼容已存在表）。"""
+        self._check_initialized()
+        stmts = [
+            "ALTER TABLE IF EXISTS skills ADD COLUMN IF NOT EXISTS tool_dependencies JSONB DEFAULT '[]'::jsonb",
+            "ALTER TABLE IF EXISTS skills ADD COLUMN IF NOT EXISTS mcp_dependencies JSONB DEFAULT '[]'::jsonb",
+            "ALTER TABLE IF EXISTS skills ADD COLUMN IF NOT EXISTS skill_dependencies JSONB DEFAULT '[]'::jsonb",
+        ]
+        async with self.async_engine.begin() as conn:
+            for stmt in stmts:
+                await conn.execute(text(stmt))
+
     @property
     def is_postgresql(self) -> bool:
         """检查是否是 PostgreSQL 数据库"""

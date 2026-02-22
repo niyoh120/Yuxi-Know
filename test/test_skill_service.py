@@ -52,6 +52,57 @@ def test_get_skill_prompt_metadata_by_slugs_dedup_and_skip_missing(monkeypatch: 
     assert [item["path"] for item in result] == ["/skills/beta/SKILL.md", "/skills/alpha/SKILL.md"]
 
 
+def test_get_skill_dependency_options(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(svc, "_get_buildin_tool_names", lambda: ["calculator", "search"])
+    monkeypatch.setattr(svc, "get_mcp_server_names", lambda: ["mcp-a", "mcp-b"])
+    monkeypatch.setattr(
+        svc,
+        "_skill_options_cache",
+        [
+            {"id": "alpha", "name": "alpha", "description": "a"},
+            {"id": "beta", "name": "beta", "description": "b"},
+        ],
+    )
+
+    result = svc.get_skill_dependency_options()
+    assert result["tools"] == ["calculator", "search"]
+    assert result["mcps"] == ["mcp-a", "mcp-b"]
+    assert result["skills"] == ["alpha", "beta"]
+
+
+def test_expand_skill_closure_and_dependency_bundle(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(
+        svc,
+        "_skill_dependency_cache",
+        {
+            "alpha": {"tools": ["t1"], "mcps": ["m1"], "skills": ["beta"]},
+            "beta": {"tools": ["t2"], "mcps": ["m2"], "skills": ["gamma"]},
+            "gamma": {"tools": ["t3"], "mcps": [], "skills": []},
+        },
+    )
+
+    closure = svc.expand_skill_closure(["alpha"])
+    assert closure == ["alpha", "beta", "gamma"]
+
+    bundle = svc.get_dependency_bundle_for_activated_skills(["alpha"])
+    assert bundle["skills"] == ["alpha", "beta", "gamma"]
+    assert bundle["tools"] == ["t1", "t2", "t3"]
+    assert bundle["mcps"] == ["m1", "m2"]
+
+
+def test_expand_skill_closure_cycle(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(
+        svc,
+        "_skill_dependency_cache",
+        {
+            "alpha": {"tools": [], "mcps": [], "skills": ["beta"]},
+            "beta": {"tools": [], "mcps": [], "skills": ["alpha"]},
+        },
+    )
+    # 不应抛异常，并且去重保序
+    assert svc.expand_skill_closure(["alpha"]) == ["alpha", "beta"]
+
+
 def test_resolve_relative_path_blocks_traversal(tmp_path: Path):
     skill_dir = tmp_path / "skill"
     skill_dir.mkdir(parents=True, exist_ok=True)
@@ -80,6 +131,9 @@ async def test_import_skill_zip_conflict_rewrite_name(tmp_path: Path, monkeypatc
             slug: str,
             name: str,
             description: str,
+            tool_dependencies: list[str] | None,
+            mcp_dependencies: list[str] | None,
+            skill_dependencies: list[str] | None,
             dir_path: str,
             created_by: str | None,
         ) -> Skill:
@@ -87,6 +141,9 @@ async def test_import_skill_zip_conflict_rewrite_name(tmp_path: Path, monkeypatc
                 slug=slug,
                 name=name,
                 description=description,
+                tool_dependencies=tool_dependencies or [],
+                mcp_dependencies=mcp_dependencies or [],
+                skill_dependencies=skill_dependencies or [],
                 dir_path=dir_path,
                 created_by=created_by,
                 updated_by=created_by,
@@ -193,3 +250,85 @@ async def test_update_skill_md_syncs_metadata(tmp_path: Path, monkeypatch: pytes
     assert updates["updated_by"] == "admin"
     saved_content = (skill_dir / "SKILL.md").read_text(encoding="utf-8")
     assert "description: updated desc" in saved_content
+
+
+@pytest.mark.asyncio
+async def test_update_skill_dependencies(monkeypatch: pytest.MonkeyPatch):
+    item = Skill(
+        slug="alpha",
+        name="alpha",
+        description="alpha",
+        dir_path="skills/alpha",
+        tool_dependencies=[],
+        mcp_dependencies=[],
+        skill_dependencies=[],
+    )
+    monkeypatch.setattr(svc, "_get_buildin_tool_names", lambda: ["calculator"])
+    monkeypatch.setattr(svc, "get_mcp_server_names", lambda: ["mcp-a"])
+    monkeypatch.setattr(
+        svc,
+        "_skill_options_cache",
+        [
+            {"id": "alpha", "name": "alpha", "description": "a"},
+            {"id": "beta", "name": "beta", "description": "b"},
+        ],
+    )
+
+    async def fake_get_skill_or_raise(_db, slug: str):
+        assert slug == "alpha"
+        return item
+
+    captured: dict[str, list[str] | str | None] = {}
+
+    class FakeRepo:
+        def __init__(self, _db):
+            pass
+
+        async def list_all(self):
+            return [
+                item,
+                Skill(
+                    slug="beta",
+                    name="beta",
+                    description="beta",
+                    dir_path="skills/beta",
+                    tool_dependencies=[],
+                    mcp_dependencies=[],
+                    skill_dependencies=[],
+                ),
+            ]
+
+        async def update_dependencies(
+            self,
+            _item: Skill,
+            *,
+            tool_dependencies: list[str],
+            mcp_dependencies: list[str],
+            skill_dependencies: list[str],
+            updated_by: str | None,
+        ):
+            captured["tool_dependencies"] = tool_dependencies
+            captured["mcp_dependencies"] = mcp_dependencies
+            captured["skill_dependencies"] = skill_dependencies
+            captured["updated_by"] = updated_by
+            _item.tool_dependencies = tool_dependencies
+            _item.mcp_dependencies = mcp_dependencies
+            _item.skill_dependencies = skill_dependencies
+            return _item
+
+    monkeypatch.setattr(svc, "get_skill_or_raise", fake_get_skill_or_raise)
+    monkeypatch.setattr(svc, "SkillRepository", FakeRepo)
+
+    updated = await svc.update_skill_dependencies(
+        None,
+        slug="alpha",
+        tool_dependencies=["calculator", "calculator"],
+        mcp_dependencies=["mcp-a", "mcp-a"],
+        skill_dependencies=["beta", "beta"],
+        updated_by="root",
+    )
+    assert captured["tool_dependencies"] == ["calculator"]
+    assert captured["mcp_dependencies"] == ["mcp-a"]
+    assert captured["skill_dependencies"] == ["beta"]
+    assert captured["updated_by"] == "root"
+    assert updated.skill_dependencies == ["beta"]

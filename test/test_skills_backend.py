@@ -49,6 +49,7 @@ def test_selected_skills_backend_readonly_and_visible_only_selected(tmp_path, mo
 def test_composite_backend_mounts_skills_under_prefix(tmp_path, monkeypatch):
     _prepare_skills_dir(tmp_path)
     monkeypatch.setattr(skills_backend, "get_skills_root_dir", lambda: tmp_path)
+    monkeypatch.setattr(skills_backend, "get_expanded_visible_skill_slugs", lambda slugs: ["alpha", "beta"])
 
     runtime = SimpleNamespace(
         context=SimpleNamespace(skills=["alpha"]),
@@ -62,7 +63,7 @@ def test_composite_backend_mounts_skills_under_prefix(tmp_path, monkeypatch):
 
     skills_root = composite.ls_info("/skills/")
     skill_paths = sorted(entry.get("path") for entry in skills_root)
-    assert skill_paths == ["/skills/alpha/"]
+    assert skill_paths == ["/skills/alpha/", "/skills/beta/"]
 
     denied = composite.write("/skills/alpha/new.md", "x")
     assert denied.error and "read-only" in denied.error

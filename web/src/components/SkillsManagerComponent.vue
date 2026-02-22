@@ -41,6 +41,11 @@
               <div class="detail-title">
                 <strong>{{ currentSkill.name }}</strong>
                 <span class="slug">({{ currentSkill.slug }})</span>
+                <span class="dependency-summary">
+                  工具 {{ (currentSkill.tool_dependencies || []).length }} · MCP
+                  {{ (currentSkill.mcp_dependencies || []).length }} · Skills
+                  {{ (currentSkill.skill_dependencies || []).length }}
+                </span>
               </div>
               <div class="detail-actions">
                 <a-button size="small" @click="reloadTree">刷新目录</a-button>
@@ -49,6 +54,44 @@
                 <a-button size="small" @click="handleExport">导出 ZIP</a-button>
                 <a-button danger size="small" @click="confirmDeleteSkill">删除 Skill</a-button>
               </div>
+            </div>
+
+            <div class="dependency-panel">
+              <div class="dependency-header">
+                <span class="dependency-title">依赖管理</span>
+                <a-button type="primary" size="small" :loading="savingDependencies" @click="saveDependencies">
+                  保存依赖
+                </a-button>
+              </div>
+              <a-form layout="vertical" class="dependency-form">
+                <a-form-item label="工具依赖">
+                  <a-select
+                    v-model:value="dependencyForm.tool_dependencies"
+                    mode="multiple"
+                    :options="toolDependencyOptions"
+                    placeholder="选择工具依赖"
+                    allow-clear
+                  />
+                </a-form-item>
+                <a-form-item label="MCP 依赖">
+                  <a-select
+                    v-model:value="dependencyForm.mcp_dependencies"
+                    mode="multiple"
+                    :options="mcpDependencyOptions"
+                    placeholder="选择 MCP 服务依赖"
+                    allow-clear
+                  />
+                </a-form-item>
+                <a-form-item label="Skill 依赖">
+                  <a-select
+                    v-model:value="dependencyForm.skill_dependencies"
+                    mode="multiple"
+                    :options="skillDependencyOptions"
+                    placeholder="选择 Skill 依赖"
+                    allow-clear
+                  />
+                </a-form-item>
+              </a-form>
             </div>
 
             <div class="detail-body">
@@ -129,6 +172,7 @@ const loading = ref(false)
 const importing = ref(false)
 const savingFile = ref(false)
 const creatingNode = ref(false)
+const savingDependencies = ref(false)
 
 const skills = ref([])
 const currentSkill = ref(null)
@@ -145,10 +189,27 @@ const createForm = reactive({
   isDir: false,
   content: ''
 })
+const dependencyOptions = reactive({
+  tools: [],
+  mcps: [],
+  skills: []
+})
+const dependencyForm = reactive({
+  tool_dependencies: [],
+  mcp_dependencies: [],
+  skill_dependencies: []
+})
 
 const columns = [
   { title: '名称', dataIndex: 'name', key: 'name', width: 180, ellipsis: true },
   { title: 'Slug', dataIndex: 'slug', key: 'slug', width: 180, ellipsis: true },
+  {
+    title: '依赖',
+    key: 'dependencies',
+    width: 150,
+    customRender: ({ record }) =>
+      `T${(record.tool_dependencies || []).length} / M${(record.mcp_dependencies || []).length} / S${(record.skill_dependencies || []).length}`
+  },
   { title: '描述', dataIndex: 'description', key: 'description', ellipsis: true },
   { title: '更新时间', dataIndex: 'updated_at', key: 'updated_at', width: 180, ellipsis: true }
 ]
@@ -161,6 +222,20 @@ const canSave = computed(() => {
 const rowClassName = (record) => {
   return currentSkill.value?.slug === record.slug ? 'selected-row' : ''
 }
+
+const toolDependencyOptions = computed(() =>
+  (dependencyOptions.tools || []).map((item) => ({ label: item, value: item }))
+)
+
+const mcpDependencyOptions = computed(() =>
+  (dependencyOptions.mcps || []).map((item) => ({ label: item, value: item }))
+)
+
+const skillDependencyOptions = computed(() =>
+  (dependencyOptions.skills || [])
+    .filter((slug) => slug !== currentSkill.value?.slug)
+    .map((item) => ({ label: item, value: item }))
+)
 
 const bindSkillRow = (record) => ({
   onClick: () => selectSkill(record)
@@ -199,13 +274,33 @@ const fetchSkills = async () => {
         resetFileState()
       } else {
         currentSkill.value = latest
+        syncDependencyFormFromSkill(latest)
       }
     }
+    await fetchDependencyOptions()
   } catch (error) {
     message.error(error.message || '获取 Skills 列表失败')
   } finally {
     loading.value = false
   }
+}
+
+const fetchDependencyOptions = async () => {
+  try {
+    const result = await skillApi.getSkillDependencyOptions()
+    const data = result?.data || {}
+    dependencyOptions.tools = data.tools || []
+    dependencyOptions.mcps = data.mcps || []
+    dependencyOptions.skills = data.skills || []
+  } catch (error) {
+    message.error(error.message || '获取依赖选项失败')
+  }
+}
+
+const syncDependencyFormFromSkill = (skillRecord) => {
+  dependencyForm.tool_dependencies = [...(skillRecord?.tool_dependencies || [])]
+  dependencyForm.mcp_dependencies = [...(skillRecord?.mcp_dependencies || [])]
+  dependencyForm.skill_dependencies = [...(skillRecord?.skill_dependencies || [])]
 }
 
 const reloadTree = async () => {
@@ -223,6 +318,7 @@ const reloadTree = async () => {
 
 const selectSkill = async (record) => {
   currentSkill.value = record
+  syncDependencyFormFromSkill(record)
   resetFileState()
   await reloadTree()
 }
@@ -400,6 +496,29 @@ const handleImportUpload = async ({ file, onSuccess, onError }) => {
   }
 }
 
+const saveDependencies = async () => {
+  if (!currentSkill.value) return
+  savingDependencies.value = true
+  try {
+    const result = await skillApi.updateSkillDependencies(currentSkill.value.slug, {
+      tool_dependencies: dependencyForm.tool_dependencies,
+      mcp_dependencies: dependencyForm.mcp_dependencies,
+      skill_dependencies: dependencyForm.skill_dependencies
+    })
+    const updated = result?.data || null
+    if (updated) {
+      currentSkill.value = updated
+      syncDependencyFormFromSkill(updated)
+    }
+    await fetchSkills()
+    message.success('依赖保存成功')
+  } catch (error) {
+    message.error(error.message || '依赖保存失败')
+  } finally {
+    savingDependencies.value = false
+  }
+}
+
 onMounted(() => {
   fetchSkills()
 })
@@ -463,16 +582,44 @@ onMounted(() => {
   display: flex;
   align-items: center;
   gap: 6px;
+  flex-wrap: wrap;
 }
 
 .slug {
   color: var(--gray-600);
 }
 
+.dependency-summary {
+  color: var(--gray-600);
+  font-size: 12px;
+}
+
 .detail-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.dependency-panel {
+  border: 1px solid var(--gray-150);
+  border-radius: 8px;
+  padding: 8px;
+  margin-bottom: 10px;
+}
+
+.dependency-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.dependency-title {
+  font-weight: 600;
+}
+
+.dependency-form :deep(.ant-form-item) {
+  margin-bottom: 8px;
 }
 
 .detail-body {

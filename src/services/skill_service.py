@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import config as sys_config
 from src.repositories.skill_repository import SkillRepository
+from src.services.mcp_service import get_mcp_server_names
 from src.storage.postgres.manager import pg_manager
 from src.storage.postgres.models_business import Skill
 from src.utils.logging_config import logger
@@ -52,6 +53,29 @@ TEXT_FILE_EXTENSIONS = {
 
 _skill_options_cache: list[dict[str, str]] = []
 _skill_prompt_metadata_cache: dict[str, dict[str, str]] = {}
+_skill_dependency_cache: dict[str, dict[str, list[str]]] = {}
+
+
+def _normalize_string_list(values: list[str] | None) -> list[str]:
+    if not values:
+        return []
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        if not isinstance(value, str):
+            continue
+        item = value.strip()
+        if not item or item in seen:
+            continue
+        seen.add(item)
+        normalized.append(item)
+    return normalized
+
+
+def _get_buildin_tool_names() -> list[str]:
+    from src.agents.common.tools import get_buildin_tools
+
+    return [tool.name for tool in get_buildin_tools()]
 
 
 def get_skills_root_dir() -> Path:
@@ -63,6 +87,14 @@ def get_skills_root_dir() -> Path:
 def get_skill_options() -> list[dict[str, str]]:
     """返回技能选项缓存（用于 BaseContext configurable options）。"""
     return list(_skill_options_cache)
+
+
+def get_skill_dependency_options() -> dict[str, list[str]]:
+    return {
+        "tools": _get_buildin_tool_names(),
+        "mcps": get_mcp_server_names(),
+        "skills": [item["id"] for item in _skill_options_cache],
+    }
 
 
 def get_skill_prompt_metadata_by_slugs(slugs: list[str]) -> list[dict[str, str]]:
@@ -87,8 +119,68 @@ def get_skill_prompt_metadata_by_slugs(slugs: list[str]) -> list[dict[str, str]]
     return result
 
 
+def expand_skill_closure(slugs: list[str]) -> list[str]:
+    """递归展开 skill 依赖（仅缓存，无 IO），去重保序并去环。"""
+    ordered_roots = _normalize_string_list(slugs)
+    if not ordered_roots:
+        return []
+
+    result: list[str] = []
+    seen: set[str] = set()
+
+    def dfs(slug: str, stack: set[str]) -> None:
+        if slug in stack:
+            logger.warning(f"Cycle detected in skill dependencies, skip: {' -> '.join([*stack, slug])}")
+            return
+        if slug in seen:
+            return
+
+        node = _skill_dependency_cache.get(slug)
+        if not node:
+            logger.warning(f"Skill dependency target not found in cache, skip: {slug}")
+            return
+
+        seen.add(slug)
+        result.append(slug)
+        next_stack = set(stack)
+        next_stack.add(slug)
+        for dep in node.get("skills", []):
+            dfs(dep, next_stack)
+
+    for root in ordered_roots:
+        dfs(root, set())
+    return result
+
+
+def get_dependency_bundle_for_activated_skills(activated_slugs: list[str]) -> dict[str, list[str]]:
+    closure = expand_skill_closure(activated_slugs)
+    tools: list[str] = []
+    mcps: list[str] = []
+    seen_tools: set[str] = set()
+    seen_mcps: set[str] = set()
+
+    for slug in closure:
+        dep = _skill_dependency_cache.get(slug, {})
+        for tool_name in dep.get("tools", []):
+            if tool_name in seen_tools:
+                continue
+            seen_tools.add(tool_name)
+            tools.append(tool_name)
+        for server_name in dep.get("mcps", []):
+            if server_name in seen_mcps:
+                continue
+            seen_mcps.add(server_name)
+            mcps.append(server_name)
+    return {"tools": tools, "mcps": mcps, "skills": closure}
+
+
+def get_expanded_visible_skill_slugs(selected_slugs: list[str]) -> list[str]:
+    """展开运行时可见 skills（根 skills + 递归依赖）。"""
+    return expand_skill_closure(selected_slugs)
+
+
 def _set_skill_options_cache(items: list[Skill]) -> None:
-    global _skill_options_cache, _skill_prompt_metadata_cache
+    global _skill_options_cache, _skill_prompt_metadata_cache, _skill_dependency_cache
     _skill_options_cache = [
         {
             "id": item.slug,
@@ -102,6 +194,14 @@ def _set_skill_options_cache(items: list[Skill]) -> None:
             "name": item.name,
             "description": item.description,
             "path": f"/skills/{item.slug}/SKILL.md",
+        }
+        for item in items
+    }
+    _skill_dependency_cache = {
+        item.slug: {
+            "tools": _normalize_string_list(item.tool_dependencies or []),
+            "mcps": _normalize_string_list(item.mcp_dependencies or []),
+            "skills": _normalize_string_list(item.skill_dependencies or []),
         }
         for item in items
     }
@@ -124,6 +224,69 @@ async def list_skills(db: AsyncSession) -> list[Skill]:
     items = await repo.list_all()
     _set_skill_options_cache(items)
     return items
+
+
+def _validate_dependencies(
+    *,
+    slug: str,
+    tool_dependencies: list[str],
+    mcp_dependencies: list[str],
+    skill_dependencies: list[str],
+) -> tuple[list[str], list[str], list[str]]:
+    tools = _normalize_string_list(tool_dependencies)
+    mcps = _normalize_string_list(mcp_dependencies)
+    skills = _normalize_string_list(skill_dependencies)
+
+    available_tools = set(_get_buildin_tool_names())
+    invalid_tools = [name for name in tools if name not in available_tools]
+    if invalid_tools:
+        raise ValueError(f"存在无效工具依赖: {', '.join(invalid_tools)}")
+
+    available_mcps = set(get_mcp_server_names())
+    invalid_mcps = [name for name in mcps if name not in available_mcps]
+    if invalid_mcps:
+        raise ValueError(f"存在无效 MCP 依赖: {', '.join(invalid_mcps)}")
+
+    available_skills = {item["id"] for item in _skill_options_cache}
+    invalid_skills = [name for name in skills if name not in available_skills]
+    if invalid_skills:
+        raise ValueError(f"存在无效 skill 依赖: {', '.join(invalid_skills)}")
+
+    if slug in skills:
+        raise ValueError("skill_dependencies 不允许包含自身")
+
+    return tools, mcps, skills
+
+
+async def update_skill_dependencies(
+    db: AsyncSession,
+    *,
+    slug: str,
+    tool_dependencies: list[str],
+    mcp_dependencies: list[str],
+    skill_dependencies: list[str],
+    updated_by: str | None,
+) -> Skill:
+    item = await get_skill_or_raise(db, slug)
+    repo = SkillRepository(db)
+    # 写操作前先同步一次缓存，确保依赖校验基于最新技能集合。
+    _set_skill_options_cache(await repo.list_all())
+    tools, mcps, skills = _validate_dependencies(
+        slug=slug,
+        tool_dependencies=tool_dependencies,
+        mcp_dependencies=mcp_dependencies,
+        skill_dependencies=skill_dependencies,
+    )
+
+    updated = await repo.update_dependencies(
+        item,
+        tool_dependencies=tools,
+        mcp_dependencies=mcps,
+        skill_dependencies=skills,
+        updated_by=updated_by,
+    )
+    _set_skill_options_cache(await repo.list_all())
+    return updated
 
 
 def _validate_skill_name(name: str) -> str:
@@ -312,6 +475,9 @@ async def import_skill_zip(
                 slug=final_slug,
                 name=final_name,
                 description=parsed_desc,
+                tool_dependencies=[],
+                mcp_dependencies=[],
+                skill_dependencies=[],
                 dir_path=(Path("skills") / final_slug).as_posix(),
                 created_by=created_by,
             )

@@ -6,7 +6,7 @@ from typing import Any
 from deepagents.backends import CompositeBackend, FilesystemBackend, StateBackend
 from deepagents.backends.protocol import EditResult, FileDownloadResponse, FileUploadResponse, WriteResult
 
-from src.services.skill_service import get_skills_root_dir
+from src.services.skill_service import get_expanded_visible_skill_slugs, get_skills_root_dir
 
 
 class SelectedSkillsReadonlyBackend(FilesystemBackend):
@@ -120,9 +120,10 @@ class SelectedSkillsReadonlyBackend(FilesystemBackend):
 def create_agent_composite_backend(runtime) -> CompositeBackend:
     """为 agent 构建 backend：默认 StateBackend + /skills 路由只读 backend。"""
     selected_skills = getattr(runtime.context, "skills", None)
+    visible_skills = get_expanded_visible_skill_slugs(selected_skills or [])
     return CompositeBackend(
         default=StateBackend(runtime),
         routes={
-            "/skills/": SelectedSkillsReadonlyBackend(selected_slugs=selected_skills),
+            "/skills/": SelectedSkillsReadonlyBackend(selected_slugs=visible_skills),
         },
     )
