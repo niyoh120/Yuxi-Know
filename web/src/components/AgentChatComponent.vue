@@ -337,6 +337,10 @@ const supportsFiles = computed(() => {
   return capabilities.includes('files')
 })
 
+const currentCapabilities = computed(() => {
+  return currentAgent.value?.capabilities || []
+})
+
 // AgentState 相关计算属性
 const currentAgentState = computed(() => {
   return currentChatId.value ? getThreadState(currentChatId.value)?.agentState || null : null
@@ -949,6 +953,13 @@ const handleSendMessage = async ({ image } = {}) => {
   threadState.streamAbortController = new AbortController()
 
   try {
+    console.log('[AgentStateDebug][before_send]', {
+      threadId,
+      currentAgentId: currentAgentId.value,
+      capabilities: currentCapabilities.value,
+      supportsTodo: supportsTodo.value,
+      supportsFiles: supportsFiles.value
+    })
     const response = await sendMessage({
       agentId: currentAgentId.value,
       threadId: threadId,
@@ -967,10 +978,20 @@ const handleSendMessage = async ({ image } = {}) => {
     }
     threadState.isStreaming = false
   } finally {
+    console.log('[AgentStateDebug][send_finally_start]', {
+      threadId,
+      currentAgentId: currentAgentId.value,
+      supportsTodo: supportsTodo.value,
+      supportsFiles: supportsFiles.value
+    })
     threadState.streamAbortController = null
     // 异步加载历史记录，保持当前消息显示直到历史记录加载完成
     fetchThreadMessages({ agentId: currentAgentId.value, threadId: threadId, delay: 500 }).finally(
       () => {
+        console.log('[AgentStateDebug][history_refreshed_after_send]', {
+          threadId,
+          currentAgentId: currentAgentId.value
+        })
         // 历史记录加载完成后，安全地清空当前进行中的对话
         resetOnGoingConv(threadId)
         scrollController.scrollToBottom()
@@ -1019,6 +1040,14 @@ const handleApprovalWithStream = async (approved) => {
   }
 
   try {
+    console.log('[AgentStateDebug][before_resume_send]', {
+      threadId,
+      currentAgentId: currentAgentId.value,
+      approved,
+      capabilities: currentCapabilities.value,
+      supportsTodo: supportsTodo.value,
+      supportsFiles: supportsFiles.value
+    })
     // 使用审批 composable 处理审批
     const response = await handleApproval(
       approved,
@@ -1044,6 +1073,12 @@ const handleApprovalWithStream = async (approved) => {
     }
   } finally {
     console.log('🔄 [STREAM] Cleaning up streaming state')
+    console.log('[AgentStateDebug][resume_finally_start]', {
+      threadId,
+      currentAgentId: currentAgentId.value,
+      supportsTodo: supportsTodo.value,
+      supportsFiles: supportsFiles.value
+    })
     if (threadState) {
       threadState.isStreaming = false
       threadState.streamAbortController = null
@@ -1052,6 +1087,10 @@ const handleApprovalWithStream = async (approved) => {
     // 异步加载历史记录，保持当前消息显示直到历史记录加载完成
     fetchThreadMessages({ agentId: currentAgentId.value, threadId: threadId, delay: 500 }).finally(
       () => {
+        console.log('[AgentStateDebug][history_refreshed_after_resume]', {
+          threadId,
+          currentAgentId: currentAgentId.value
+        })
         // 历史记录加载完成后，安全地清空当前进行中的对话
         resetOnGoingConv(threadId)
         scrollController.scrollToBottom()
@@ -1110,14 +1149,15 @@ const handleAgentStateRefresh = async (threadId = null) => {
   if (!currentAgentId.value) return
   // 优先使用传入的 threadId，否则使用当前的 currentChatId
   let chatId = threadId || currentChatId.value
-  console.log(
-    '[handleAgentStateRefresh] input threadId:',
-    threadId,
-    'currentChatId:',
-    currentChatId.value,
-    'final chatId:',
-    chatId
-  )
+  console.log('[AgentStateDebug][manual_refresh_start]', {
+    inputThreadId: threadId,
+    currentChatId: currentChatId.value,
+    finalChatId: chatId,
+    currentAgentId: currentAgentId.value,
+    capabilities: currentCapabilities.value,
+    supportsTodo: supportsTodo.value,
+    supportsFiles: supportsFiles.value
+  })
   if (!chatId) return
   await fetchAgentState(currentAgentId.value, chatId)
 }
@@ -1244,6 +1284,19 @@ onMounted(async () => {
   await initAll()
   scrollController.enableAutoScroll()
 })
+
+watch(
+  [currentAgentId, currentCapabilities, supportsTodo, supportsFiles],
+  ([agentId, capabilities, todo, files]) => {
+    console.log('[AgentStateDebug][capabilities_changed]', {
+      currentAgentId: agentId,
+      capabilities,
+      supportsTodo: todo,
+      supportsFiles: files
+    })
+  },
+  { immediate: true }
+)
 
 watch(
   currentAgentId,
