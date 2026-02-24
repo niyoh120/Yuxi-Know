@@ -87,6 +87,10 @@
                 :show-refs="['model', 'copy']"
                 :is-latest-message="false"
               />
+              <ConversationSourcesPanel
+                v-if="shouldShowRefs(conv)"
+                :sources="getConversationSources(conv)"
+              />
             </div>
 
             <!-- 生成中的加载状态 - 增强条件支持主聊天和resume流程 -->
@@ -215,6 +219,7 @@ import HumanApprovalModal from '@/components/HumanApprovalModal.vue'
 import { useApproval } from '@/composables/useApproval'
 import { useAgentStreamHandler } from '@/composables/useAgentStreamHandler'
 import AgentPanel from '@/components/AgentPanel.vue'
+import ConversationSourcesPanel from '@/components/ConversationSourcesPanel.vue'
 
 // ==================== PROPS & EMITS ====================
 const props = defineProps({
@@ -692,7 +697,9 @@ const fetchAgentState = async (agentId, threadId) => {
       const newTs = getThreadState(threadId)
       if (newTs) newTs.agentState = res.agent_state || null
     }
-  } catch (error) {}
+  } catch {
+    // 忽略状态拉取失败，不阻塞主流程
+  }
 }
 
 const fetchMentionResources = async () => {
@@ -716,7 +723,7 @@ const ensureActiveThread = async (title = '新的对话') => {
       chatState.currentThreadId = newThread.id
       return newThread.id
     }
-  } catch (error) {
+  } catch {
     // createThread 已处理错误提示
   }
   return null
@@ -1185,6 +1192,10 @@ const showMsgRefs = (msg) => {
     return ['copy']
   }
   return false
+}
+
+const getConversationSources = (conv) => {
+  return MessageProcessor.extractSourcesFromConversation(conv, availableKnowledgeBases.value)
 }
 
 // ==================== LIFECYCLE & WATCHERS ====================
