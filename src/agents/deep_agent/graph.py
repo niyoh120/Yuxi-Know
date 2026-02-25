@@ -6,6 +6,7 @@ from deepagents.middleware.subagents import SubAgentMiddleware
 from langchain.agents import create_agent
 from langchain.agents.middleware import (
     TodoListMiddleware,
+    ToolCallLimitMiddleware,
 )
 
 from src.agents.common import BaseAgent, load_chat_model
@@ -103,12 +104,22 @@ class DeepAgent(BaseAgent):
         # Build subagents with search tools
         research_sub_agent = _get_research_sub_agent(search_tools)
 
+        # 主 Agent 上下文优化：90k tokens 触发压缩（128k context window 的 70%）
         summary_middleware = SummaryOffloadMiddleware(
             model=model,
-            trigger=("tokens", 160000),
-            trim_tokens_to_summarize=None,
-            summary_offload_threshold=1000,
-            max_retention_ratio=0.6,
+            trigger=("tokens", 90000),
+            trim_tokens_to_summarize=4000,
+            summary_offload_threshold=500,
+            max_retention_ratio=0.5,
+        )
+
+        # 子 Agent 独立的上下文优化：更激进的压缩策略
+        sub_summary_middleware = SummaryOffloadMiddleware(
+            model=sub_model,
+            trigger=("tokens", 50000),
+            trim_tokens_to_summarize=2000,
+            summary_offload_threshold=300,
+            max_retention_ratio=0.4,
         )
 
         subagents_middleware = SubAgentMiddleware(
@@ -123,7 +134,13 @@ class DeepAgent(BaseAgent):
                     enable_tools_override=False,
                 ),
                 PatchToolCallsMiddleware(),
-                summary_middleware,
+                sub_summary_middleware,
+                # 子 Agent 搜索工具限制：tavily_search 最多 8 次
+                ToolCallLimitMiddleware(
+                    tool_name="tavily_search",
+                    run_limit=8,
+                    exit_behavior="continue",
+                ),
             ],
             general_purpose_agent=True,
         )
@@ -140,6 +157,17 @@ class DeepAgent(BaseAgent):
                 PatchToolCallsMiddleware(),
                 subagents_middleware,
                 summary_middleware,
+                # 工具调用限制：tavily_search 总调用最多 20 次
+                ToolCallLimitMiddleware(
+                    tool_name="tavily_search",
+                    thread_limit=20,
+                    exit_behavior="continue",
+                ),
+                # 总工具调用轮次限制：防止单次运行无限循环
+                ToolCallLimitMiddleware(
+                    run_limit=50,
+                    exit_behavior="end",
+                ),
             ],
             checkpointer=await self._get_checkpointer(),
         )
