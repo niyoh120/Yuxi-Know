@@ -75,7 +75,7 @@ async def get_default_agent(current_user: User = Depends(get_required_user)):
         default_agent_id = conf.default_agent_id
         # 如果没有设置默认智能体，尝试获取第一个可用的智能体
         if not default_agent_id:
-            agents = await agent_manager.get_agents_info()
+            agents = await agent_manager.get_agents_info(include_configurable_items=False)
             if agents:
                 default_agent_id = agents[0].get("id", "")
 
@@ -94,7 +94,7 @@ async def set_default_agent(request_data: dict = Body(...), current_user=Depends
             raise HTTPException(status_code=422, detail="缺少必需的 agent_id 字段")
 
         # 验证智能体是否存在
-        agents = await agent_manager.get_agents_info()
+        agents = await agent_manager.get_agents_info(include_configurable_items=False)
         agent_ids = [agent.get("id", "") for agent in agents]
 
         if agent_id not in agent_ids:
@@ -137,7 +137,7 @@ async def call(query: str = Body(...), meta: dict = Body(None), current_user: Us
 @chat.get("/agent")
 async def get_agent(current_user: User = Depends(get_required_user)):
     """获取所有可用智能体的基本信息（需要登录）"""
-    agents_info = await agent_manager.get_agents_info()
+    agents_info = await agent_manager.get_agents_info(include_configurable_items=False)
 
     # Return agents with basic information (without configurable_items for performance)
     agents = [

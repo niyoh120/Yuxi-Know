@@ -10,7 +10,6 @@ import yaml
 
 from src import config as sys_config
 from src.services.mcp_service import get_mcp_server_names
-from src.services.skill_service import get_skill_options
 from src.utils import logger
 
 from .tools import gen_tool_info, get_buildin_tools
@@ -96,7 +95,7 @@ class BaseContext:
         default_factory=list,
         metadata={
             "name": "Skills",
-            "options": lambda: get_skill_options(),
+            "options": [],
             "description": "可选技能列表（由超级管理员维护）。运行时仅挂载并只读暴露选中的 skills。",
             "type": "list",
         },

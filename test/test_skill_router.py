@@ -100,14 +100,14 @@ def test_update_skill_file_passes_operator(monkeypatch):
 
 
 def test_dependency_options_route(monkeypatch):
-    monkeypatch.setattr(
-        "server.routers.skill_router.get_skill_dependency_options",
-        lambda: {
+    async def fake_get_skill_dependency_options(_db):
+        return {
             "tools": ["calculator"],
             "mcps": ["mcp-a"],
             "skills": ["demo"],
-        },
-    )
+        }
+
+    monkeypatch.setattr("server.routers.skill_router.get_skill_dependency_options", fake_get_skill_dependency_options)
 
     app = _build_app(allow_superadmin=True)
     client = TestClient(app)

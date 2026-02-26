@@ -372,6 +372,7 @@ import ModelSelectorComponent from '@/components/ModelSelectorComponent.vue'
 import { useAgentStore } from '@/stores/agent'
 import { useUserStore } from '@/stores/user'
 import { useDatabaseStore } from '@/stores/database'
+import { skillApi } from '@/apis/skill_api'
 import { storeToRefs } from 'pinia'
 
 // Props
@@ -399,6 +400,7 @@ watch(
   async (val) => {
     if (val) {
       databaseStore.loadDatabases().catch(() => {})
+      loadLiveSkillOptions().catch(() => {})
       if (selectedAgentId.value) {
         try {
           await agentStore.fetchAgentDetail(selectedAgentId.value, true)
@@ -430,6 +432,7 @@ const tempSelectedValues = ref([])
 const selectionSearchText = ref('')
 const systemPromptEditMode = ref(false)
 const activeTab = ref('basic')
+const liveSkillOptions = ref([])
 
 const isEmptyConfig = computed(() => {
   return !selectedAgentId.value || Object.keys(configurableItems.value).length === 0
@@ -470,6 +473,24 @@ const segmentedOptions = computed(() => {
   return options
 })
 
+const loadLiveSkillOptions = async () => {
+  if (!userStore.isAdmin) {
+    liveSkillOptions.value = []
+    return
+  }
+  try {
+    const result = await skillApi.listSkills()
+    const rows = result?.data || []
+    liveSkillOptions.value = rows.map((item) => ({
+      id: item.slug,
+      name: item.slug,
+      description: item.description || ''
+    }))
+  } catch (error) {
+    console.warn('加载实时 Skills 列表失败:', error)
+  }
+}
+
 // 通用选项获取与处理
 const getConfigOptions = (value) => {
   if (value?.template_metadata?.kind === 'tools') {
@@ -477,6 +498,9 @@ const getConfigOptions = (value) => {
   }
   if (value?.template_metadata?.kind === 'knowledges') {
     return databaseStore.databases || []
+  }
+  if (value?.template_metadata?.kind === 'skills') {
+    return liveSkillOptions.value.length > 0 ? liveSkillOptions.value : value?.options || []
   }
   return value?.options || []
 }
@@ -636,12 +660,8 @@ const openSelectionModal = async (key) => {
       console.error('加载知识库列表失败:', error)
     }
   }
-  if (configurableItems.value[key]?.template_metadata?.kind === 'skills' && selectedAgentId.value) {
-    try {
-      await agentStore.fetchAgentDetail(selectedAgentId.value, true)
-    } catch (error) {
-      console.error('刷新 Skills 列表失败:', error)
-    }
+  if (configurableItems.value[key]?.template_metadata?.kind === 'skills') {
+    await loadLiveSkillOptions()
   }
   const currentValues = agentConfig.value[key] || []
   tempSelectedValues.value = [...currentValues]

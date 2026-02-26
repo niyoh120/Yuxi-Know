@@ -43,70 +43,27 @@ def test_validate_skill_slug():
         svc.validate_skill_slug("../bad")
 
 
-def test_get_skill_prompt_metadata_by_slugs_dedup_and_skip_missing(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(
-        svc,
-        "_skill_prompt_metadata_cache",
-        {
-            "alpha": {"name": "alpha", "description": "a", "path": "/skills/alpha/SKILL.md"},
-            "beta": {"name": "beta", "description": "b", "path": "/skills/beta/SKILL.md"},
-        },
-    )
-
-    result = svc.get_skill_prompt_metadata_by_slugs(["beta", "missing", "alpha", "beta"])
-    assert [item["name"] for item in result] == ["beta", "alpha"]
-    assert [item["path"] for item in result] == ["/skills/beta/SKILL.md", "/skills/alpha/SKILL.md"]
-
-
-def test_get_skill_dependency_options(monkeypatch: pytest.MonkeyPatch):
+@pytest.mark.asyncio
+async def test_get_skill_dependency_options(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(svc, "_get_buildin_tool_names", lambda: ["calculator", "search"])
     monkeypatch.setattr(svc, "get_mcp_server_names", lambda: ["mcp-a", "mcp-b"])
-    monkeypatch.setattr(
-        svc,
-        "_skill_options_cache",
-        [
-            {"id": "alpha", "name": "alpha", "description": "a"},
-            {"id": "beta", "name": "beta", "description": "b"},
-        ],
-    )
 
-    result = svc.get_skill_dependency_options()
+    class FakeRepo:
+        def __init__(self, _db):
+            pass
+
+        async def list_all(self):
+            return [
+                Skill(slug="alpha", name="alpha", description="a", dir_path="skills/alpha"),
+                Skill(slug="beta", name="beta", description="b", dir_path="skills/beta"),
+            ]
+
+    monkeypatch.setattr(svc, "SkillRepository", FakeRepo)
+
+    result = await svc.get_skill_dependency_options(None)
     assert result["tools"] == ["calculator", "search"]
     assert result["mcps"] == ["mcp-a", "mcp-b"]
     assert result["skills"] == ["alpha", "beta"]
-
-
-def test_expand_skill_closure_and_dependency_bundle(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(
-        svc,
-        "_skill_dependency_cache",
-        {
-            "alpha": {"tools": ["t1"], "mcps": ["m1"], "skills": ["beta"]},
-            "beta": {"tools": ["t2"], "mcps": ["m2"], "skills": ["gamma"]},
-            "gamma": {"tools": ["t3"], "mcps": [], "skills": []},
-        },
-    )
-
-    closure = svc.expand_skill_closure(["alpha"])
-    assert closure == ["alpha", "beta", "gamma"]
-
-    bundle = svc.get_dependency_bundle_for_activated_skills(["alpha"])
-    assert bundle["skills"] == ["alpha", "beta", "gamma"]
-    assert bundle["tools"] == ["t1", "t2", "t3"]
-    assert bundle["mcps"] == ["m1", "m2"]
-
-
-def test_expand_skill_closure_cycle(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(
-        svc,
-        "_skill_dependency_cache",
-        {
-            "alpha": {"tools": [], "mcps": [], "skills": ["beta"]},
-            "beta": {"tools": [], "mcps": [], "skills": ["alpha"]},
-        },
-    )
-    # 不应抛异常，并且去重保序
-    assert svc.expand_skill_closure(["alpha"]) == ["alpha", "beta"]
 
 
 def test_resolve_relative_path_blocks_traversal(tmp_path: Path):
@@ -157,9 +114,6 @@ async def test_import_skill_zip_conflict_rewrite_name(tmp_path: Path, monkeypatc
             self.__class__.existing_slugs.add(slug)
             self.__class__.created_item = item
             return item
-
-        async def list_all(self) -> list[Skill]:
-            return [self.__class__.created_item] if self.__class__.created_item else []
 
     monkeypatch.setattr(svc, "SkillRepository", FakeRepo)
 
@@ -230,9 +184,6 @@ async def test_update_skill_md_syncs_metadata(tmp_path: Path, monkeypatch: pytes
             updates["updated_by"] = updated_by
             return item
 
-        async def list_all(self) -> list[Skill]:
-            return [item]
-
     monkeypatch.setattr(svc, "get_skill_or_raise", fake_get_skill_or_raise)
     monkeypatch.setattr(svc, "SkillRepository", FakeRepo)
 
@@ -271,14 +222,6 @@ async def test_update_skill_dependencies(monkeypatch: pytest.MonkeyPatch):
     )
     monkeypatch.setattr(svc, "_get_buildin_tool_names", lambda: ["calculator"])
     monkeypatch.setattr(svc, "get_mcp_server_names", lambda: ["mcp-a"])
-    monkeypatch.setattr(
-        svc,
-        "_skill_options_cache",
-        [
-            {"id": "alpha", "name": "alpha", "description": "a"},
-            {"id": "beta", "name": "beta", "description": "b"},
-        ],
-    )
 
     async def fake_get_skill_or_raise(_db, slug: str):
         assert slug == "alpha"

@@ -76,10 +76,11 @@ async def list_skills_route(
 @skills.get("/dependency-options")
 async def get_skill_dependency_options_route(
     _current_user: User = Depends(get_superadmin_user),
+    db: AsyncSession = Depends(get_db),
 ):
     """获取 skill 依赖项可选列表（仅超级管理员）。"""
     try:
-        return {"success": True, "data": get_skill_dependency_options()}
+        return {"success": True, "data": await get_skill_dependency_options(db)}
     except Exception as e:
         logger.error(f"Failed to get skill dependency options: {e}")
         raise HTTPException(status_code=500, detail="获取 skill 依赖选项失败")

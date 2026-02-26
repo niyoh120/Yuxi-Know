@@ -35,6 +35,8 @@ Skills 管理模块用于集中维护可供 Agent 只读引用的技能包。
 ## Agent 运行时行为
 
 1. `context.skills` 用于配置技能 slug 列表。
-2. 运行时仅暴露选中 skills 到 `/skills/<slug>/...`。
-3. `/skills` 路径只读，不允许写入、编辑、上传。
-4. 变更在下一次对话请求生效。
+2. 运行时按会话构建 `SkillResolver` 快照（同一会话首次构建，后续复用）。
+3. 运行时仅暴露快照中的可见 skills 到 `/skills/<slug>/...`。
+4. `/skills` 路径只读，不允许写入、编辑、上传。
+5. 同会话内若 `context.skills` 变化会触发快照重建。
+6. 后台修改 skills 内容后，已有会话不会自动刷新，需新会话或调整 `context.skills` 才生效。

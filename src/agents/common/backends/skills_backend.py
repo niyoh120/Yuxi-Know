@@ -6,7 +6,8 @@ from typing import Any
 from deepagents.backends import CompositeBackend, FilesystemBackend, StateBackend
 from deepagents.backends.protocol import EditResult, FileDownloadResponse, FileUploadResponse, WriteResult
 
-from src.services.skill_service import get_expanded_visible_skill_slugs, get_skills_root_dir, is_valid_skill_slug
+from src.services.skill_resolver import normalize_selected_skills
+from src.services.skill_service import get_skills_root_dir, is_valid_skill_slug
 
 
 class SelectedSkillsReadonlyBackend(FilesystemBackend):
@@ -121,11 +122,23 @@ class SelectedSkillsReadonlyBackend(FilesystemBackend):
 
 def create_agent_composite_backend(runtime) -> CompositeBackend:
     """为 agent 构建 backend：默认 StateBackend + /skills 路由只读 backend。"""
-    selected_skills = getattr(runtime.context, "skills", None)
-    visible_skills = get_expanded_visible_skill_slugs(selected_skills or [])
+    visible_skills = _get_visible_skills_from_runtime(runtime)
     return CompositeBackend(
         default=StateBackend(runtime),
         routes={
             "/skills/": SelectedSkillsReadonlyBackend(selected_slugs=visible_skills),
         },
     )
+
+
+def _get_visible_skills_from_runtime(runtime) -> list[str]:
+    state = getattr(runtime, "state", None)
+    if isinstance(state, dict):
+        snapshot = state.get("skill_session_snapshot")
+        if isinstance(snapshot, dict):
+            visible = snapshot.get("visible_skills")
+            if isinstance(visible, list):
+                return [slug for slug in visible if isinstance(slug, str) and is_valid_skill_slug(slug)]
+
+    selected = getattr(runtime.context, "skills", None) or []
+    return normalize_selected_skills(selected)
