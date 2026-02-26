@@ -12,6 +12,7 @@ from langgraph.graph.state import CompiledStateGraph
 
 from src import config as sys_config
 from src.agents.common.context import BaseContext
+from src.services.skill_resolver import get_skill_options_from_db
 from src.utils import logger
 
 
@@ -43,9 +44,15 @@ class BaseAgent:
         """Get the agent's class name."""
         return self.__class__.__name__
 
-    async def get_info(self):
+    async def get_info(self, include_configurable_items: bool = True):
         # Load metadata from file
         metadata = self.load_metadata()
+        configurable_items = {}
+        if include_configurable_items:
+            configurable_items = self.context_schema.get_configurable_items()
+            if "skills" in configurable_items:
+                configurable_items["skills"] = dict(configurable_items["skills"])
+                configurable_items["skills"]["options"] = await get_skill_options_from_db()
 
         # Merge metadata with class attributes, metadata takes precedence
         return {
@@ -53,7 +60,7 @@ class BaseAgent:
             "name": metadata.get("name", getattr(self, "name", "Unknown")),
             "description": metadata.get("description", getattr(self, "description", "Unknown")),
             "examples": metadata.get("examples", []),
-            "configurable_items": self.context_schema.get_configurable_items(),
+            "configurable_items": configurable_items,
             "has_checkpointer": await self.check_checkpointer(),
             "capabilities": getattr(self, "capabilities", []),  # 智能体能力列表
         }

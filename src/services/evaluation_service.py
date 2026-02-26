@@ -231,6 +231,29 @@ class EvaluationService:
             logger.error(f"获取评估基准详情失败: {e}")
             raise
 
+    async def get_benchmark_download_info(self, benchmark_id: str) -> dict[str, str]:
+        """获取评估基准下载信息"""
+        row = await self.eval_repo.get_benchmark(benchmark_id)
+        if row is None:
+            raise ValueError("Benchmark not found")
+
+        data_file_path = row.data_file_path or ""
+        if not data_file_path or not os.path.exists(data_file_path):
+            raise ValueError("Benchmark file not found")
+
+        filename_base = (row.name or "").strip()
+        if not filename_base:
+            filename_base = row.benchmark_id
+
+        filename_base = re.sub(r"[\\/:*?\"<>|]+", "_", filename_base).strip()
+        if not filename_base or filename_base in {".", ".."}:
+            filename_base = row.benchmark_id
+
+        if not filename_base.endswith(".jsonl"):
+            filename_base = f"{filename_base}.jsonl"
+
+        return {"file_path": data_file_path, "filename": filename_base}
+
     async def delete_benchmark(self, benchmark_id: str) -> None:
         """删除评估基准"""
         try:

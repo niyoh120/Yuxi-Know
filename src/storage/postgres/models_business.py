@@ -171,6 +171,41 @@ class AgentConfig(Base):
         }
 
 
+class Skill(Base):
+    """Skill 元数据模型（内容存文件系统，索引存数据库）"""
+
+    __tablename__ = "skills"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    slug = Column(String(128), nullable=False, unique=True, index=True, comment="技能唯一标识（目录名）")
+    name = Column(String(128), nullable=False, comment="技能名称（来自 SKILL.md frontmatter.name）")
+    description = Column(Text, nullable=False, comment="技能描述（来自 SKILL.md frontmatter.description）")
+    tool_dependencies = Column(JSON, nullable=False, default=list, comment="依赖的内置工具名列表")
+    mcp_dependencies = Column(JSON, nullable=False, default=list, comment="依赖的 MCP 服务名列表")
+    skill_dependencies = Column(JSON, nullable=False, default=list, comment="依赖的其他 skill slug 列表")
+    dir_path = Column(String(512), nullable=False, comment="技能目录路径（相对 save_dir）")
+    created_by = Column(String(64), nullable=True)
+    updated_by = Column(String(64), nullable=True)
+    created_at = Column(DateTime, default=utc_now_naive)
+    updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "slug": self.slug,
+            "name": self.name,
+            "description": self.description,
+            "tool_dependencies": self.tool_dependencies or [],
+            "mcp_dependencies": self.mcp_dependencies or [],
+            "skill_dependencies": self.skill_dependencies or [],
+            "dir_path": self.dir_path,
+            "created_by": self.created_by,
+            "updated_by": self.updated_by,
+            "created_at": format_utc_datetime(self.created_at),
+            "updated_at": format_utc_datetime(self.updated_at),
+        }
+
+
 class Conversation(Base):
     """Conversation table - 对话表"""
 
@@ -381,6 +416,7 @@ class MCPServer(Base):
     url = Column(String(500), nullable=True, comment="服务器 URL（sse/streamable_http）")
     command = Column(String(500), nullable=True, comment="命令（stdio）")
     args = Column(JSON, nullable=True, comment="命令参数数组（stdio）")
+    env = Column(JSON, nullable=True, comment="环境变量（stdio）")
     headers = Column(JSON, nullable=True, comment="HTTP 请求头")
     timeout = Column(Integer, nullable=True, comment="HTTP 超时时间（秒）")
     sse_read_timeout = Column(Integer, nullable=True, comment="SSE 读取超时（秒）")
@@ -409,6 +445,7 @@ class MCPServer(Base):
             "url": self.url,
             "command": self.command,
             "args": self.args or [],
+            "env": self.env or {},
             "headers": self.headers or {},
             "timeout": self.timeout,
             "sse_read_timeout": self.sse_read_timeout,
@@ -438,6 +475,14 @@ class MCPServer(Base):
             elif isinstance(self.args, str):
                 try:
                     config["args"] = json.loads(self.args)
+                except json.JSONDecodeError:
+                    pass
+        if self.transport == "stdio" and self.env:
+            if isinstance(self.env, dict):
+                config["env"] = self.env
+            elif isinstance(self.env, str):
+                try:
+                    config["env"] = json.loads(self.env)
                 except json.JSONDecodeError:
                     pass
         # headers 只用于 sse/streamable_http 传输类型
