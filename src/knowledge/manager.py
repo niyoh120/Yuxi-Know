@@ -175,16 +175,28 @@ class KnowledgeBaseManager:
 
         kb_repo = KnowledgeBaseRepository()
         rows = await kb_repo.get_all()
-
         all_databases = []
+        metadata_reloaded_types: set[str] = set()
         for row in rows:
-            kb_instance = self._get_or_create_kb_instance(row.kb_type or "lightrag")
+            kb_type = row.kb_type or "lightrag"
+            kb_instance = self._get_or_create_kb_instance(kb_type)
             db_info = kb_instance.get_database_info(row.db_id)
-            if db_info:
-                # 补充 share_config 和 additional_params
-                db_info["share_config"] = row.share_config or {"is_shared": True, "accessible_departments": []}
-                db_info["additional_params"] = ensure_chunk_defaults_in_additional_params(row.additional_params)
-                all_databases.append(db_info)
+            if not db_info and kb_type not in metadata_reloaded_types:
+                try:
+                    await kb_instance._load_metadata()
+                    metadata_reloaded_types.add(kb_type)
+                except Exception as e:
+                    logger.warning(f"Failed to reload metadata for kb_type={kb_type}: {e}")
+                db_info = kb_instance.get_database_info(row.db_id)
+
+            if not db_info:
+                logger.warning(f"Skip database due to missing metadata: db_id={row.db_id}, kb_type={kb_type}")
+                continue
+
+            # 补充 share_config 和 additional_params
+            db_info["share_config"] = row.share_config or {"is_shared": True, "accessible_departments": []}
+            db_info["additional_params"] = ensure_chunk_defaults_in_additional_params(row.additional_params)
+            all_databases.append(db_info)
         return {"databases": all_databases}
 
     async def check_accessible(self, user: dict, db_id: str) -> bool:
