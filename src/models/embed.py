@@ -74,8 +74,8 @@ class BaseEmbeddingModel(ABC):
             task_id = hashstr(messages)
             self.embed_state[task_id] = {"status": "in-progress", "total": len(messages), "progress": 0}
 
-        #保留原有逻辑：
-        #使用 asyncio.gather 并发执行所有 embedding 批次请求：
+        # 保留原有逻辑：
+        # 使用 asyncio.gather 并发执行所有 embedding 批次请求：
         # tasks = []
         # for i in range(0, len(messages), batch_size):
         #     group_msg = messages[i : i + batch_size]
@@ -90,7 +90,7 @@ class BaseEmbeddingModel(ABC):
         #     self.embed_state[task_id]["status"] = "completed"
 
         # return data
-        
+
         for i in range(0, len(messages), batch_size):
             group_msg = messages[i : i + batch_size]
             logger.info(f"Async encoding [{i}/{len(messages)}] messages (bsz={batch_size})")
