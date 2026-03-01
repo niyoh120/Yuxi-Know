@@ -104,10 +104,6 @@ services:
       context: .
       dockerfile: docker/web.Dockerfile
       target: production
-      args:
-        VITE_API_URL: ${VITE_API_URL:-http://api:5050}
-        VITE_USE_RUNS_API: ${VITE_USE_RUNS_API:-false}
-        VITE_ENABLE_KNOWLEDGE_GRAPH: ${YUXI_ENABLE_KNOWLEDGE_GRAPH:-true}
     image: yuxi-web:0.5.prod
     container_name: web-prod
     ports:
@@ -120,7 +116,6 @@ services:
       - NODE_ENV=production
       - VITE_API_URL=http://api:5050
       - VITE_USE_RUNS_API=${VITE_USE_RUNS_API:-false}
-      - VITE_ENABLE_KNOWLEDGE_GRAPH=${YUXI_ENABLE_KNOWLEDGE_GRAPH:-true}
     command: nginx -g "daemon off;"
     restart: unless-stopped
 
