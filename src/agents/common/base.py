@@ -14,7 +14,6 @@ from src import config as sys_config
 from src.agents.common.context import BaseContext
 from src.services.skill_resolver import get_skill_options_from_db
 from src.utils import logger
-from src.utils.langfuse_integration import get_langfuse_callback
 
 
 class BaseAgent:
@@ -76,13 +75,7 @@ class BaseAgent:
         if isinstance(agent_config, dict):
             context.update(agent_config)
         context.update(input_context or {})
-
-        stream_config = {}
-        langfuse_handler = get_langfuse_callback()
-        if langfuse_handler:
-            stream_config["callbacks"] = [langfuse_handler]
-
-        for event in graph.astream({"messages": messages}, stream_mode="values", context=context, config=stream_config):
+        for event in graph.astream({"messages": messages}, stream_mode="values", context=context):
             yield event["messages"]
 
     async def stream_messages(self, messages: list[str], input_context=None, **kwargs):
@@ -99,9 +92,6 @@ class BaseAgent:
             "configurable": {"thread_id": context.thread_id, "user_id": context.user_id},
             "recursion_limit": 300,
         }
-        langfuse_handler = get_langfuse_callback()
-        if langfuse_handler:
-            input_config["callbacks"] = [langfuse_handler]
 
         async for msg, metadata in graph.astream(
             {"messages": messages},
@@ -125,9 +115,6 @@ class BaseAgent:
             "configurable": {"thread_id": context.thread_id, "user_id": context.user_id},
             "recursion_limit": 100,
         }
-        langfuse_handler = get_langfuse_callback()
-        if langfuse_handler:
-            input_config["callbacks"] = [langfuse_handler]
 
         msg = await graph.ainvoke(
             {"messages": messages},
