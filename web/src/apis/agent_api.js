@@ -352,6 +352,36 @@ export const threadApi = {
     apiPost(`/api/chat/thread/${threadId}/artifacts/save`, { path }),
 
   /**
+   * 上传临时附件
+   * @param {File} file
+   * @returns {Promise}
+   */
+  uploadTmpAttachment: (file) => {
+    const formData = new FormData()
+    formData.append('file', file)
+    return apiRequest('/api/chat/attachments/tmp', {
+      method: 'POST',
+      body: formData
+    })
+  },
+
+  /**
+   * 解析临时附件
+   * @param {Object} payload
+   * @returns {Promise}
+   */
+  parseTmpAttachment: (payload) => apiPost('/api/chat/attachments/tmp/parse', payload),
+
+  /**
+   * 确认添加临时附件到线程
+   * @param {string} threadId
+   * @param {Array} attachments
+   * @returns {Promise}
+   */
+  confirmTmpThreadAttachments: (threadId, attachments) =>
+    apiPost(`/api/chat/thread/${threadId}/attachments/confirm`, { attachments }),
+
+  /**
    * 上传附件
    * @param {string} threadId
    * @param {File} file

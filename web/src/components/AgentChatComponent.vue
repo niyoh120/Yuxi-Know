@@ -125,6 +125,13 @@
                 </template>
               </AgentInputArea>
 
+              <AttachmentTmpUploadModal
+                v-model:open="attachmentUploadModalOpen"
+                :thread-id="currentChatId"
+                :ensure-thread="ensureAttachmentThread"
+                @added="handleTmpAttachmentsAdded"
+              />
+
               <div class="bottom-actions" v-if="conversations.length > 0">
                 <p class="note">当前智能体：{{ currentThreadAgentName }}；请注意辨别内容的可靠性</p>
               </div>
@@ -204,6 +211,7 @@ import { useStreamSmoother } from '@/composables/useStreamSmoother'
 import { useAgentMentionConfig } from '@/composables/useAgentMentionConfig'
 import AgentArtifactsCard from '@/components/AgentArtifactsCard.vue'
 import AgentPanel from '@/components/AgentPanel.vue'
+import AttachmentTmpUploadModal from '@/components/AttachmentTmpUploadModal.vue'
 
 // ==================== PROPS & EMITS ====================
 const props = defineProps({
@@ -265,6 +273,7 @@ const { getThreadState, resetOnGoingConv, stopThreadStream } = useAgentThreadSta
 const threadMessages = ref({})
 const threadFilesMap = ref({})
 const threadAttachmentsMap = ref({})
+const attachmentUploadModalOpen = ref(false)
 const threadConfigNoticeMap = ref({})
 const threadPendingConfigNoticeMap = ref({})
 const threadConfigSnapshotMap = ref({})
@@ -1024,8 +1033,7 @@ const ensureActiveThread = async (title = '新的对话') => {
   return null
 }
 
-const handleAttachmentUpload = async (files) => {
-  if (!files?.length) return
+const handleAttachmentUpload = async () => {
   if (
     !AgentValidator.validateAgentIdWithError(
       currentAgentId.value,
@@ -1035,37 +1043,23 @@ const handleAttachmentUpload = async (files) => {
   )
     return
 
-  const preferredTitle = files[0]?.name || '新的对话'
-  let threadId = currentChatId.value
+  attachmentUploadModalOpen.value = true
+}
 
-  if (!threadId) {
-    threadId = await ensureActiveThread(preferredTitle)
-  }
+const ensureAttachmentThread = async () => {
+  if (currentChatId.value) return currentChatId.value
+  return await ensureActiveThread('新的对话')
+}
 
-  if (!threadId) {
-    message.error('创建对话失败，无法上传附件')
-    return
-  }
+const handleTmpAttachmentsAdded = async () => {
+  const threadId = currentChatId.value
+  if (!threadId) return
 
-  try {
-    message.loading({
-      content: '正在上传附件...',
-      key: 'upload-attachment',
-      duration: 0
-    })
-    for (const file of files) {
-      await threadApi.uploadThreadAttachment(threadId, file)
-    }
-    message.success({ content: '附件上传成功', key: 'upload-attachment', duration: 2 })
-    await Promise.all([
-      fetchAgentState(currentAgentId.value, threadId),
-      refreshThreadFilesAndAttachments(threadId)
-    ])
-    isAgentPanelOpen.value = true
-  } catch (error) {
-    message.destroy('upload-attachment')
-    handleChatError(error, 'upload')
-  }
+  await Promise.all([
+    fetchAgentState(currentAgentId.value, threadId),
+    refreshThreadFilesAndAttachments(threadId)
+  ])
+  isAgentPanelOpen.value = true
 }
 
 const handleAttachmentRemove = async (attachment) => {

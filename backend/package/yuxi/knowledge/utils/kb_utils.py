@@ -230,7 +230,7 @@ def parse_minio_url(file_path: str) -> tuple[str, str]:
         ValueError: 如果无法解析URL
     """
     try:
-        from urllib.parse import urlparse
+        from urllib.parse import unquote, urlparse
 
         # 解析URL
         parsed_url = urlparse(file_path)
@@ -238,14 +238,14 @@ def parse_minio_url(file_path: str) -> tuple[str, str]:
         # 对于 minio:// 协议，bucket名称在netloc中
         if parsed_url.scheme == "minio":
             bucket_name = parsed_url.netloc
-            object_name = parsed_url.path.lstrip("/")
+            object_name = unquote(parsed_url.path.lstrip("/"))
         else:
             # 对于 http/https 协议，bucket名称在path的第一部分
             object_name = parsed_url.path.lstrip("/")
             path_parts = object_name.split("/", 1)
             if len(path_parts) > 1:
                 bucket_name = path_parts[0]
-                object_name = path_parts[1]
+                object_name = unquote(path_parts[1])
             else:
                 raise ValueError(f"无法解析MinIO URL中的bucket名称: {file_path}")
 

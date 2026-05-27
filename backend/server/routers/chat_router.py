@@ -15,14 +15,17 @@ from yuxi.models import select_model
 from yuxi.services.chat_service import get_agent_state_view, stream_agent_resume
 from yuxi.repositories.conversation_repository import ConversationRepository
 from yuxi.services.conversation_service import (
+    confirm_tmp_thread_attachments_view,
     create_thread_view,
     delete_thread_attachment_view,
     delete_thread_view,
     get_thread_history_view,
     list_thread_attachments_view,
     list_threads_view,
+    parse_tmp_attachment_view,
     update_thread_view,
     upload_thread_attachment_view,
+    upload_tmp_attachment_view,
 )
 from yuxi.services.thread_files_service import (
     list_thread_files_view,
@@ -251,6 +254,55 @@ class AttachmentListResponse(BaseModel):
     limits: AttachmentLimits
 
 
+class TmpAttachmentResponse(BaseModel):
+    tmp_file_id: str
+    file_name: str
+    file_type: str | None = None
+    file_size: int
+    bucket_name: str
+    object_name: str
+    minio_url: str
+    uploaded_at: str
+    parse_supported: bool = False
+    parse_methods: list[str] = Field(default_factory=list)
+
+
+class TmpAttachmentParseRequest(BaseModel):
+    object_name: str
+    file_name: str
+    parse_method: str | None = None
+    bucket_name: str | None = None
+
+
+class TmpAttachmentParseResponse(BaseModel):
+    tmp_file_id: str
+    file_name: str
+    bucket_name: str
+    object_name: str
+    parsed_object_name: str
+    parsed_minio_url: str
+    parse_method: str
+    status: str
+    truncated: bool = False
+
+
+class TmpAttachmentConfirmItem(BaseModel):
+    file_name: str
+    file_type: str | None = None
+    bucket_name: str
+    object_name: str
+    parsed_object_name: str | None = None
+    truncated: bool = False
+
+
+class TmpAttachmentConfirmRequest(BaseModel):
+    attachments: list[TmpAttachmentConfirmItem]
+
+
+class TmpAttachmentConfirmResponse(BaseModel):
+    attachments: list[AttachmentResponse]
+
+
 class ThreadFileEntry(BaseModel):
     path: str
     name: str
@@ -351,6 +403,43 @@ async def update_thread(
 # ================================
 # > === 附件管理分组 ===
 # ================================
+
+
+@chat.post("/attachments/tmp", response_model=TmpAttachmentResponse)
+async def upload_tmp_attachment(file: UploadFile = File(...), current_user: User = Depends(get_required_user)):
+    """上传附件到 MinIO tmp，暂不关联线程。"""
+    return await upload_tmp_attachment_view(file=file, current_uid=str(current_user.uid))
+
+
+@chat.post("/attachments/tmp/parse", response_model=TmpAttachmentParseResponse)
+async def parse_tmp_attachment(
+    request: TmpAttachmentParseRequest,
+    current_user: User = Depends(get_required_user),
+):
+    """解析 tmp 附件并返回解析后的 tmp URL。"""
+    return await parse_tmp_attachment_view(
+        object_name=request.object_name,
+        file_name=request.file_name,
+        parse_method=request.parse_method,
+        bucket_name=request.bucket_name,
+        current_uid=str(current_user.uid),
+    )
+
+
+@chat.post("/thread/{thread_id}/attachments/confirm", response_model=TmpAttachmentConfirmResponse)
+async def confirm_tmp_thread_attachments(
+    thread_id: str,
+    request: TmpAttachmentConfirmRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_required_user),
+):
+    """将 tmp 附件正式加入线程附件列表。"""
+    return await confirm_tmp_thread_attachments_view(
+        thread_id=thread_id,
+        attachments=[item.model_dump() for item in request.attachments],
+        db=db,
+        current_uid=str(current_user.uid),
+    )
 
 
 @chat.post("/thread/{thread_id}/attachments", response_model=AttachmentResponse)

@@ -411,6 +411,20 @@ class ConversationRepository:
         await self._save_metadata(conversation, metadata)
         return attachment_info
 
+    async def add_attachments(self, conversation_id: int, attachment_infos: list[dict]) -> list[dict] | None:
+        conversation = await self._get_conversation_by_id(conversation_id)
+        if not conversation:
+            return None
+
+        metadata = self._ensure_metadata(conversation)
+        attachments = metadata.get("attachments", [])
+        incoming_ids = {item.get("file_id") for item in attachment_infos}
+        attachments = [item for item in attachments if item.get("file_id") not in incoming_ids]
+        attachments.extend(attachment_infos)
+        metadata["attachments"] = attachments
+        await self._save_metadata(conversation, metadata)
+        return attachment_infos
+
     async def update_attachment_status(
         self, conversation_id: int, file_id: str, status: str, update_fields: dict | None = None
     ) -> dict | None:

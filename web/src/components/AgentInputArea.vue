@@ -214,8 +214,7 @@ const updateValue = (val) => {
   emit('update:modelValue', val)
 }
 
-const handleAttachmentUpload = (files) => {
-  if (!files?.length) return
+const handleAttachmentUpload = (files = []) => {
   emit('upload-attachment', files)
 }
 

@@ -1,6 +1,7 @@
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import quote
 
 from fastapi import HTTPException, UploadFile
 from sqlalchemy import select
@@ -15,7 +16,8 @@ from yuxi.plugins.parser import Parser
 from yuxi.repositories.agent_repository import AgentRepository
 from yuxi.repositories.conversation_repository import ConversationRepository
 from yuxi.services.mention_search_service import invalidate_mention_cache
-from yuxi.services.upload_utils import write_upload_to_path
+from yuxi.services.upload_utils import read_upload_with_limit, write_upload_to_path
+from yuxi.storage.minio import StorageError, get_minio_client
 from yuxi.storage.postgres.models_business import User
 from yuxi.utils.datetime_utils import utc_isoformat
 from yuxi.utils.logging_config import logger
@@ -24,6 +26,17 @@ from yuxi.utils.paths import VIRTUAL_PATH_UPLOADS
 ATTACHMENT_ALLOWED_EXTENSIONS: tuple[str, ...] = ()
 MAX_ATTACHMENT_SIZE_BYTES = 5 * 1024 * 1024  # 5 MB
 MAX_ATTACHMENT_MARKDOWN_CHARS = 32_000  # TODO: 转 MARKDOWN的时候，不应该裁剪
+TMP_ATTACHMENT_PREFIX = "tmp/chat_attachments"
+TMP_ATTACHMENT_PARSE_EXTENSIONS = (".pdf", ".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif")
+TMP_ATTACHMENT_IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif")
+TMP_ATTACHMENT_OCR_METHODS = (
+    "rapid_ocr",
+    "mineru_ocr",
+    "mineru_official",
+    "pp_structure_v3_ocr",
+    "deepseek_ocr",
+)
+TMP_ATTACHMENT_PARSE_METHODS = ("disable", *TMP_ATTACHMENT_OCR_METHODS)
 
 
 @dataclass(slots=True)
@@ -101,13 +114,18 @@ async def require_user_conversation(conv_repo: ConversationRepository, thread_id
     return conversation
 
 
+def _safe_file_name(file_name: str | None, default: str = "attachment.bin") -> str:
+    safe_name = Path(file_name or "").name.replace("/", "_").replace("\\", "_").strip(" .")
+    return safe_name or default
+
+
 def _make_upload_virtual_path(file_name: str) -> str:
-    safe_name = file_name.replace("/", "_").replace("\\", "_").strip(" .")
-    return f"{VIRTUAL_PATH_UPLOADS}/{safe_name or 'attachment.bin'}"
+    return f"{VIRTUAL_PATH_UPLOADS}/{_safe_file_name(file_name)}"
 
 
 def _make_attachment_path(file_name: str) -> str:
     """生成附件在沙盒用户目录中的统一路径。"""
+    file_name = _safe_file_name(file_name)
     # 提取不带扩展名的部分
     base_name = file_name
     for ext in [".docx", ".txt", ".html", ".htm", ".pdf", ".md"]:
@@ -134,6 +152,82 @@ def _build_attachment_storage_path(*, uid: str, thread_id: str, file_name: str) 
 
 def _artifact_url(thread_id: str, virtual_path: str) -> str:
     return f"/api/chat/thread/{thread_id}/artifacts/{virtual_path.lstrip('/')}"
+
+
+def _tmp_attachment_prefix(uid: str, tmp_file_id: str) -> str:
+    return f"{TMP_ATTACHMENT_PREFIX}/{uid}/{tmp_file_id}"
+
+
+def _get_tmp_attachment_bucket() -> str:
+    return get_minio_client().KB_BUCKETS["documents"]
+
+
+def _make_tmp_attachment_object(uid: str, file_name: str) -> tuple[str, str]:
+    """生成用户隔离的 tmp 对象路径。"""
+    tmp_file_id = uuid.uuid4().hex
+    safe_name = _safe_file_name(file_name)
+    return tmp_file_id, f"{_tmp_attachment_prefix(uid, tmp_file_id)}/original/{safe_name}"
+
+
+def _make_tmp_parsed_object(uid: str, tmp_file_id: str, file_name: str) -> str:
+    stem = Path(_safe_file_name(file_name)).stem or "attachment"
+    return f"{_tmp_attachment_prefix(uid, tmp_file_id)}/parsed/{stem}.md"
+
+
+def _minio_source(bucket_name: str, object_name: str) -> str:
+    return f"minio://{bucket_name}/{quote(object_name, safe='/')}"
+
+
+def _parse_user_tmp_object(object_name: str, uid: str) -> tuple[str, str, str]:
+    if not object_name or "\\" in object_name:
+        raise HTTPException(status_code=400, detail="无效的临时附件路径")
+
+    user_prefix = f"{TMP_ATTACHMENT_PREFIX}/{uid}/"
+    if not object_name.startswith(user_prefix):
+        raise HTTPException(status_code=403, detail="无权访问该临时附件")
+
+    parts = object_name[len(user_prefix) :].split("/")
+    if len(parts) != 3 or any(not part or part in {".", ".."} for part in parts):
+        raise HTTPException(status_code=400, detail="无效的临时附件路径")
+
+    return parts[0], parts[1], parts[2]
+
+
+def _require_user_tmp_object(object_name: str, uid: str) -> str:
+    """校验 tmp 对象属于当前用户并返回 tmp_file_id。"""
+    tmp_file_id, _, _ = _parse_user_tmp_object(object_name, uid)
+    return tmp_file_id
+
+
+def _require_tmp_object_section(
+    object_name: str,
+    uid: str,
+    section: str,
+    tmp_file_id: str | None = None,
+) -> tuple[str, str]:
+    current_tmp_file_id, current_section, object_file_name = _parse_user_tmp_object(object_name, uid)
+    if current_section != section or (tmp_file_id is not None and current_tmp_file_id != tmp_file_id):
+        raise HTTPException(status_code=400, detail="无效的临时附件路径")
+    if section == "parsed" and Path(object_file_name).suffix.lower() != ".md":
+        raise HTTPException(status_code=400, detail="无效的解析附件路径")
+    return current_tmp_file_id, object_file_name
+
+
+def _normalize_parse_method(file_name: str, parse_method: str | None) -> str:
+    suffix = Path(file_name).suffix.lower()
+    if suffix not in TMP_ATTACHMENT_PARSE_EXTENSIONS:
+        raise HTTPException(status_code=400, detail="当前仅支持 PDF 和图片附件解析")
+
+    method = parse_method or ("rapid_ocr" if suffix in TMP_ATTACHMENT_IMAGE_EXTENSIONS else "disable")
+    if suffix in TMP_ATTACHMENT_IMAGE_EXTENSIONS:
+        allowed_methods = TMP_ATTACHMENT_OCR_METHODS
+    else:
+        allowed_methods = TMP_ATTACHMENT_PARSE_METHODS
+
+    if method not in allowed_methods:
+        allowed = ", ".join(allowed_methods)
+        raise HTTPException(status_code=400, detail=f"不支持的解析方法: {method}，可选: {allowed}")
+    return method
 
 
 def _build_state_uploads(attachments: list[dict]) -> list[dict]:
@@ -262,6 +356,60 @@ async def _materialize_attachment_files(
     return record
 
 
+def _materialize_tmp_attachment_files(
+    *,
+    thread_id: str,
+    uid: str,
+    file_id: str,
+    file_name: str,
+    file_content: bytes,
+    parsed_markdown: str | None = None,
+    truncated: bool = False,
+) -> dict:
+    """将 tmp 附件复制到线程目录，不主动删除 tmp 对象。"""
+    ensure_thread_dirs(thread_id, uid)
+
+    storage_name = f"{file_id}_{file_name}"
+    upload_virtual_path = _make_upload_virtual_path(storage_name)
+    uploads_dir = sandbox_uploads_dir(thread_id)
+    upload_actual_path = uploads_dir / Path(upload_virtual_path).name
+    upload_actual_path.write_bytes(file_content)
+
+    record = {
+        "status": "uploaded",
+        "path": upload_virtual_path,
+        "artifact_url": _artifact_url(thread_id, upload_virtual_path),
+        "storage_path": str(upload_actual_path),
+        "original_path": upload_virtual_path,
+        "original_artifact_url": _artifact_url(thread_id, upload_virtual_path),
+        "original_storage_path": str(upload_actual_path),
+        "minio_url": None,
+    }
+
+    if parsed_markdown is None:
+        return record
+
+    markdown_virtual_path, markdown_host_path = _build_attachment_storage_path(
+        uid=uid,
+        thread_id=thread_id,
+        file_name=storage_name,
+    )
+    markdown_host_path.write_text(parsed_markdown, encoding="utf-8")
+    record.update(
+        {
+            "status": "parsed",
+            "path": markdown_virtual_path,
+            "artifact_url": _artifact_url(thread_id, markdown_virtual_path),
+            "storage_path": str(markdown_host_path),
+            "file_path": markdown_virtual_path,
+            "markdown": parsed_markdown,
+            "truncated": truncated,
+            "markdown_storage_path": str(markdown_host_path),
+        }
+    )
+    return record
+
+
 async def create_thread_view(
     *,
     agent_id: str,
@@ -372,6 +520,208 @@ async def update_thread_view(
         "updated_at": updated_conv.updated_at.isoformat(),
         "metadata": updated_conv.extra_metadata or {},
     }
+
+
+async def upload_tmp_attachment_view(*, file: UploadFile, current_uid: str) -> dict:
+    """上传附件到用户隔离的 MinIO tmp 路径。"""
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="无法识别的文件名")
+
+    file_name = _safe_file_name(file.filename)
+    try:
+        file_content = await read_upload_with_limit(
+            file,
+            max_size_bytes=MAX_ATTACHMENT_SIZE_BYTES,
+            too_large_message="附件过大，当前仅支持 5 MB 以内的文件",
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    file_size = len(file_content)
+    tmp_file_id, object_name = _make_tmp_attachment_object(str(current_uid), file_name)
+    minio_client = get_minio_client()
+    bucket_name = _get_tmp_attachment_bucket()
+    try:
+        upload_result = await minio_client.aupload_file(
+            bucket_name=bucket_name,
+            object_name=object_name,
+            data=file_content,
+            content_type=file.content_type,
+        )
+    except StorageError as exc:
+        raise HTTPException(status_code=500, detail=f"临时附件上传失败: {exc}") from exc
+
+    suffix = Path(file_name).suffix.lower()
+    if suffix == ".pdf":
+        parse_methods = list(TMP_ATTACHMENT_PARSE_METHODS)
+    elif suffix in TMP_ATTACHMENT_IMAGE_EXTENSIONS:
+        parse_methods = list(TMP_ATTACHMENT_OCR_METHODS)
+    else:
+        parse_methods = []
+
+    return {
+        "tmp_file_id": tmp_file_id,
+        "file_name": file_name,
+        "file_type": file.content_type,
+        "file_size": file_size,
+        "bucket_name": upload_result.bucket_name,
+        "object_name": upload_result.object_name,
+        "minio_url": upload_result.url,
+        "uploaded_at": utc_isoformat(),
+        "parse_supported": bool(parse_methods),
+        "parse_methods": parse_methods,
+    }
+
+
+async def parse_tmp_attachment_view(
+    *,
+    object_name: str,
+    file_name: str,
+    parse_method: str | None,
+    bucket_name: str | None,
+    current_uid: str,
+) -> dict:
+    """解析用户 tmp 附件并把 markdown 写回 tmp。"""
+    minio_client = get_minio_client()
+    expected_bucket = _get_tmp_attachment_bucket()
+    bucket_name = bucket_name or expected_bucket
+    if bucket_name != expected_bucket:
+        raise HTTPException(status_code=400, detail="无效的临时附件 bucket")
+
+    tmp_file_id, safe_name = _require_tmp_object_section(object_name, str(current_uid), "original")
+    method = _normalize_parse_method(safe_name, parse_method)
+
+    try:
+        markdown = await Parser.aparse(_minio_source(bucket_name, object_name), params={"ocr_engine": method})
+        markdown, truncated = _truncate_markdown(markdown)
+        parsed_object_name = _make_tmp_parsed_object(str(current_uid), tmp_file_id, safe_name)
+        upload_result = await minio_client.aupload_file(
+            bucket_name=bucket_name,
+            object_name=parsed_object_name,
+            data=markdown.encode("utf-8"),
+            content_type="text/markdown; charset=utf-8",
+        )
+    except StorageError as exc:
+        raise HTTPException(status_code=400, detail=f"读取临时附件失败: {exc}") from exc
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"Tmp attachment parse failed for {safe_name}: {exc}")
+        raise HTTPException(status_code=400, detail=f"附件解析失败: {exc}") from exc
+
+    return {
+        "tmp_file_id": tmp_file_id,
+        "file_name": safe_name,
+        "bucket_name": upload_result.bucket_name,
+        "object_name": object_name,
+        "parsed_object_name": upload_result.object_name,
+        "parsed_minio_url": upload_result.url,
+        "parse_method": method,
+        "status": "parsed",
+        "truncated": truncated,
+    }
+
+
+async def confirm_tmp_thread_attachments_view(
+    *,
+    thread_id: str,
+    attachments: list[dict],
+    db: AsyncSession,
+    current_uid: str,
+) -> dict:
+    """将选中的 tmp 附件正式关联到对话线程。"""
+    if not attachments:
+        raise HTTPException(status_code=400, detail="请选择要添加的附件")
+
+    conv_repo = ConversationRepository(db)
+    conversation = await require_user_conversation(conv_repo, thread_id, str(current_uid))
+    minio_client = get_minio_client()
+    expected_bucket = _get_tmp_attachment_bucket()
+    prepared_items: list[dict] = []
+
+    for item in attachments:
+        object_name = str(item.get("object_name") or "")
+        bucket_name = str(item.get("bucket_name") or expected_bucket)
+        if bucket_name != expected_bucket:
+            raise HTTPException(status_code=400, detail="无效的临时附件 bucket")
+
+        tmp_file_id, file_name = _require_tmp_object_section(object_name, str(current_uid), "original")
+        try:
+            file_content = await minio_client.adownload_file(bucket_name, object_name)
+        except StorageError as exc:
+            raise HTTPException(status_code=400, detail=f"读取临时附件失败: {exc}") from exc
+
+        if len(file_content) > MAX_ATTACHMENT_SIZE_BYTES:
+            max_size_mb = MAX_ATTACHMENT_SIZE_BYTES // (1024 * 1024)
+            raise HTTPException(status_code=400, detail=f"附件过大，当前仅支持 {max_size_mb} MB 以内的文件")
+
+        parsed_markdown = None
+        parsed_object_name = str(item.get("parsed_object_name") or "")
+        if parsed_object_name:
+            _require_tmp_object_section(parsed_object_name, str(current_uid), "parsed", tmp_file_id)
+            expected_parsed_object = _make_tmp_parsed_object(str(current_uid), tmp_file_id, file_name)
+            if parsed_object_name != expected_parsed_object:
+                raise HTTPException(status_code=400, detail="解析附件路径无效")
+            try:
+                parsed_bytes = await minio_client.adownload_file(bucket_name, parsed_object_name)
+                parsed_markdown = parsed_bytes.decode("utf-8")
+            except StorageError as exc:
+                raise HTTPException(status_code=400, detail=f"读取解析附件失败: {exc}") from exc
+            except UnicodeDecodeError as exc:
+                raise HTTPException(status_code=400, detail="解析附件内容不是有效的 Markdown 文本") from exc
+
+        prepared_items.append(
+            {
+                "file_name": file_name,
+                "file_type": item.get("file_type"),
+                "file_content": file_content,
+                "parsed_markdown": parsed_markdown,
+                "truncated": bool(item.get("truncated")),
+            }
+        )
+
+    added_records: list[dict] = []
+    for prepared in prepared_items:
+        file_id = uuid.uuid4().hex
+        materialized = _materialize_tmp_attachment_files(
+            thread_id=thread_id,
+            uid=str(conversation.uid),
+            file_id=file_id,
+            file_name=prepared["file_name"],
+            file_content=prepared["file_content"],
+            parsed_markdown=prepared["parsed_markdown"],
+            truncated=prepared["truncated"],
+        )
+        attachment_record = {
+            "file_id": file_id,
+            "file_name": prepared["file_name"],
+            "file_type": prepared["file_type"],
+            "file_size": len(prepared["file_content"]),
+            "status": materialized["status"],
+            "uploaded_at": utc_isoformat(),
+            "path": materialized["path"],
+            "artifact_url": materialized["artifact_url"],
+            "storage_path": materialized["storage_path"],
+            "original_path": materialized["original_path"],
+            "original_artifact_url": materialized["original_artifact_url"],
+            "original_storage_path": materialized["original_storage_path"],
+            "minio_url": materialized["minio_url"],
+        }
+        for optional_key in ("file_path", "markdown", "truncated", "markdown_storage_path"):
+            if optional_key in materialized:
+                attachment_record[optional_key] = materialized[optional_key]
+        added_records.append(attachment_record)
+
+    await conv_repo.add_attachments(conversation.id, added_records)
+    all_attachments = await conv_repo.get_attachments(conversation.id)
+    await _sync_thread_upload_state(
+        thread_id=thread_id,
+        uid=str(current_uid),
+        agent_id=conversation.agent_id,
+        backend_id=(conversation.extra_metadata or {}).get("backend_id"),
+        attachments=all_attachments,
+    )
+    await invalidate_mention_cache(thread_id)
+
+    return {"attachments": [serialize_attachment(item) for item in added_records]}
 
 
 async def upload_thread_attachment_view(
