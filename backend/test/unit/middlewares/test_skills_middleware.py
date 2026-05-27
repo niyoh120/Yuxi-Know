@@ -12,31 +12,47 @@ from yuxi.agents.middlewares.skills_middleware import SkillsMiddleware, resolve_
 
 @pytest.mark.asyncio
 async def test_resolve_runtime_skills_derives_prompt_and_readable_closure(monkeypatch):
-    async def fake_get_dependency_map(db=None):
-        del db
-        return {
-            "alpha": {"tools": [], "mcps": [], "skills": ["beta"]},
-            "beta": {"tools": [], "mcps": [], "skills": []},
-        }
+    async def fake_list_skills_from_db(db=None, user=None):
+        del db, user
+        return [
+            SimpleNamespace(
+                slug="alpha",
+                name="Alpha",
+                description="alpha desc",
+                tool_dependencies=[],
+                mcp_dependencies=[],
+                skill_dependencies=["beta"],
+            ),
+            SimpleNamespace(
+                slug="beta",
+                name="Beta",
+                description="beta desc",
+                tool_dependencies=[],
+                mcp_dependencies=[],
+                skill_dependencies=[],
+            ),
+        ]
 
-    monkeypatch.setattr(skills_middleware, "get_dependency_map", fake_get_dependency_map)
+    monkeypatch.setattr(skills_middleware, "_list_skills_from_db", fake_list_skills_from_db)
 
     context = SimpleNamespace(skills=["alpha", "missing"])
 
     scope = await resolve_runtime_skills_for_context(context)
 
-    assert scope == {
-        "context_skills": ["alpha"],
-        "prompt_skills": ["alpha", "beta"],
-        "readable_skills": ["alpha", "beta"],
-    }
+    assert scope["context_skills"] == ["alpha"]
+    assert scope["prompt_skills"] == ["alpha", "beta"]
+    assert scope["readable_skills"] == ["alpha", "beta"]
+    assert set(scope["runtime_skill_metadata"]) == {"alpha", "beta"}
+    assert scope["runtime_skill_dependency_map"]["alpha"]["skills"] == ["beta"]
 
 
 @pytest.mark.asyncio
-async def test_skills_prompt_uses_prepared_prompt_skills(monkeypatch):
-    async def fake_get_prompt_metadata(db=None):
-        del db
-        return {
+async def test_skills_prompt_uses_prepared_prompt_skills():
+    context = SimpleNamespace(
+        system_prompt="base",
+        skills=["configured-only"],
+        _prompt_skills=["alpha"],
+        _runtime_skill_metadata={
             "alpha": {
                 "name": "Alpha",
                 "description": "alpha desc",
@@ -47,14 +63,7 @@ async def test_skills_prompt_uses_prepared_prompt_skills(monkeypatch):
                 "description": "should not appear",
                 "path": "/home/gem/skills/configured-only/SKILL.md",
             },
-        }
-
-    monkeypatch.setattr(skills_middleware, "get_prompt_metadata", fake_get_prompt_metadata)
-
-    context = SimpleNamespace(
-        system_prompt="base",
-        skills=["configured-only"],
-        _prompt_skills=["alpha"],
+        },
     )
 
     await SkillsMiddleware().abefore_agent({}, SimpleNamespace(context=context))
@@ -68,14 +77,6 @@ async def test_skills_prompt_uses_prepared_prompt_skills(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_awrap_model_call_mounts_dependencies_only_for_readable_activated_skills(monkeypatch):
-    async def fake_get_dependency_map(db=None):
-        del db
-        return {
-            "alpha": {"tools": ["tool-a"], "mcps": [], "skills": []},
-            "beta": {"tools": ["tool-b"], "mcps": [], "skills": []},
-        }
-
-    monkeypatch.setattr(skills_middleware, "get_dependency_map", fake_get_dependency_map)
     monkeypatch.setattr(
         skills_middleware,
         "get_all_tool_instances",
@@ -84,7 +85,16 @@ async def test_awrap_model_call_mounts_dependencies_only_for_readable_activated_
 
     class FakeRequest:
         def __init__(self, tools=None):
-            self.runtime = SimpleNamespace(context=SimpleNamespace(_readable_skills=["alpha"], mcps=[]))
+            self.runtime = SimpleNamespace(
+                context=SimpleNamespace(
+                    _readable_skills=["alpha"],
+                    _runtime_skill_dependency_map={
+                        "alpha": {"tools": ["tool-a"], "mcps": [], "skills": []},
+                        "beta": {"tools": ["tool-b"], "mcps": [], "skills": []},
+                    },
+                    mcps=[],
+                )
+            )
             self.state = {"activated_skills": ["alpha", "beta"]}
             self.tools = tools or []
 

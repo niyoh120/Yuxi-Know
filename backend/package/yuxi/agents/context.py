@@ -155,8 +155,8 @@ class BaseContext:
     summary_threshold: int = field(
         default=100,
         metadata={
-            "name": "上下文摘要触发阈值 (KB)",
-            "description": "当上下文大小超过该值时，启用摘要功能以优化上下文使用。单位为 KB，默认值为 100KB。",
+            "name": "上下文摘要触发阈值 (K)",
+            "description": "当上下文大小超过该值时，启用摘要功能以优化上下文使用。单位为 K，默认值为 100K。",
             "type": "number",
             "auth": "admin",
         },
@@ -294,9 +294,9 @@ async def resolve_agent_resource_options(
             if server.enabled and server.slug
         ]
     if "skills" in fields_to_load:
-        from yuxi.services.skill_service import list_skills
+        from yuxi.services.skill_service import list_accessible_skills
 
-        skills = await list_skills(db)
+        skills = await list_accessible_skills(db, user)
         options["skills"] = [
             _resource_option(skill.slug, skill.name, skill.description) for skill in skills if skill.slug
         ]
@@ -374,6 +374,8 @@ async def prepare_agent_runtime_context(
             setattr(context, "_visible_knowledge_bases", [])
             setattr(context, "_prompt_skills", [])
             setattr(context, "_readable_skills", [])
+            setattr(context, "_runtime_skill_metadata", {})
+            setattr(context, "_runtime_skill_dependency_map", {})
             return context
 
         raw_resources = {
@@ -392,9 +394,11 @@ async def prepare_agent_runtime_context(
                 setattr(context, field_name, normalized.get(field_name, []))
 
         await resolve_visible_knowledge_bases_for_context(context)
-        skill_scope = await resolve_runtime_skills_for_context(context, db=db)
+        skill_scope = await resolve_runtime_skills_for_context(context, db=db, user=user)
         context.skills = skill_scope["context_skills"]
         setattr(context, "_prompt_skills", skill_scope["prompt_skills"])
         setattr(context, "_readable_skills", skill_scope["readable_skills"])
+        setattr(context, "_runtime_skill_metadata", skill_scope["runtime_skill_metadata"])
+        setattr(context, "_runtime_skill_dependency_map", skill_scope["runtime_skill_dependency_map"])
 
     return context

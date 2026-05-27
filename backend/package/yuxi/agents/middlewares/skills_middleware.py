@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from yuxi.agents.toolkits import get_all_tool_instances
 from yuxi.repositories.skill_repository import SkillRepository
 from yuxi.services.mcp_service import get_enabled_mcp_tools
-from yuxi.services.skill_service import is_valid_skill_slug, normalize_string_list
+from yuxi.services.skill_service import is_valid_skill_slug, list_accessible_skills, normalize_string_list
 from yuxi.storage.postgres.manager import pg_manager
 from yuxi.utils.logging_config import logger
 
@@ -42,20 +42,22 @@ class SkillDependencyNode(TypedDict):
 # =============================================================================
 
 
-async def _list_skills_from_db(db: AsyncSession | None = None) -> list:
+async def _list_skills_from_db(db: AsyncSession | None = None, user=None) -> list:
     """从数据库加载 skills 列表"""
     if db is not None:
+        if user is not None:
+            return await list_accessible_skills(db, user)
         repo = SkillRepository(db)
-        return await repo.list_all()
+        return await repo.list_enabled()
 
     async with pg_manager.get_async_session_context() as session:
+        if user is not None:
+            return await list_accessible_skills(session, user)
         repo = SkillRepository(session)
-        return await repo.list_all()
+        return await repo.list_enabled()
 
 
-async def get_prompt_metadata(db: AsyncSession | None = None) -> dict[str, SkillPromptMetadata]:
-    """获取提示词元数据（直接从数据库加载）"""
-    skills = await _list_skills_from_db(db)
+def build_prompt_metadata(skills: list) -> dict[str, SkillPromptMetadata]:
     return {
         item.slug: {
             "name": item.name,
@@ -63,20 +65,31 @@ async def get_prompt_metadata(db: AsyncSession | None = None) -> dict[str, Skill
             "path": f"/home/gem/skills/{item.slug}/SKILL.md",
         }
         for item in skills
+        if item.slug
     }
 
 
-async def get_dependency_map(db: AsyncSession | None = None) -> dict[str, SkillDependencyNode]:
-    """获取依赖关系映射（直接从数据库加载）"""
-    skills = await _list_skills_from_db(db)
+def build_dependency_map(skills: list) -> dict[str, SkillDependencyNode]:
     result: dict[str, SkillDependencyNode] = {}
     for item in skills:
+        if not item.slug:
+            continue
         result[item.slug] = {
             "tools": normalize_string_list(item.tool_dependencies or []),
             "mcps": normalize_string_list(item.mcp_dependencies or []),
             "skills": normalize_string_list(item.skill_dependencies or []),
         }
     return result
+
+
+async def get_prompt_metadata(db: AsyncSession | None = None, user=None) -> dict[str, SkillPromptMetadata]:
+    """获取提示词元数据（直接从数据库加载）"""
+    return build_prompt_metadata(await _list_skills_from_db(db, user))
+
+
+async def get_dependency_map(db: AsyncSession | None = None, user=None) -> dict[str, SkillDependencyNode]:
+    """获取依赖关系映射（直接从数据库加载）"""
+    return build_dependency_map(await _list_skills_from_db(db, user))
 
 
 def expand_skill_closure(
@@ -115,16 +128,20 @@ def expand_skill_closure(
     return result
 
 
-async def resolve_runtime_skills_for_context(context, *, db: AsyncSession | None = None) -> dict[str, list[str]]:
-    dependency_map = await get_dependency_map(db)
-    installed = set(dependency_map)
+async def resolve_runtime_skills_for_context(context, *, db: AsyncSession | None = None, user=None) -> dict[str, Any]:
+    skill_items = await _list_skills_from_db(db, user)
+    dependency_map = build_dependency_map(skill_items)
+    prompt_metadata = build_prompt_metadata(skill_items)
+    available = set(dependency_map)
     selected = normalize_string_list(getattr(context, "skills", None))
-    context_skills = [slug for slug in selected if slug in installed]
+    context_skills = [slug for slug in selected if slug in available]
     prompt_skills = expand_skill_closure(context_skills, dependency_map)
     return {
         "context_skills": context_skills,
         "prompt_skills": prompt_skills,
         "readable_skills": prompt_skills,
+        "runtime_skill_metadata": prompt_metadata,
+        "runtime_skill_dependency_map": dependency_map,
     }
 
 
@@ -199,7 +216,7 @@ class SkillsMiddleware(AgentMiddleware):
             return None
 
         # 收集提示词元数据并构建提示段
-        skills_meta = await self._collect_prompt_metadata(prompt_skills)
+        skills_meta = self._collect_prompt_metadata(prompt_skills, runtime_context)
         skills_section = self._build_skills_section(skills_meta)
 
         # 注入提示词
@@ -224,7 +241,7 @@ class SkillsMiddleware(AgentMiddleware):
         readable_skills = self._get_readable_skills(runtime_context)
         activated = [slug for slug in normalize_string_list(activated) if slug in readable_skills]
 
-        deps_bundle = await self._build_dependency_bundle(activated)
+        deps_bundle = self._build_dependency_bundle(activated, runtime_context)
 
         enabled_tools = []
 
@@ -251,9 +268,9 @@ class SkillsMiddleware(AgentMiddleware):
 
         return await handler(request)
 
-    async def _build_dependency_bundle(self, activated_skills: list[str]) -> dict[str, list[str]]:
+    def _build_dependency_bundle(self, activated_skills: list[str], runtime_context) -> dict[str, list[str]]:
         """根据直接激活的 skills 构建依赖包（不包含闭包展开的依赖）"""
-        dependency_map = await get_dependency_map()
+        dependency_map = self._get_runtime_dependency_map(runtime_context)
 
         tools: list[str] = []
         mcps: list[str] = []
@@ -275,9 +292,9 @@ class SkillsMiddleware(AgentMiddleware):
 
         return {"tools": tools, "mcps": mcps, "skills": activated_skills}
 
-    async def _collect_prompt_metadata(self, slugs: list[str]) -> list[SkillPromptMetadata]:
+    def _collect_prompt_metadata(self, slugs: list[str], runtime_context) -> list[SkillPromptMetadata]:
         """收集指定 slugs 的提示词元数据"""
-        prompt_metadata = await get_prompt_metadata()
+        prompt_metadata = self._get_runtime_prompt_metadata(runtime_context)
 
         result: list[SkillPromptMetadata] = []
         seen: set[str] = set()
@@ -402,6 +419,14 @@ class SkillsMiddleware(AgentMiddleware):
     def _get_readable_skills(self, runtime_context) -> set[str]:
         selected = getattr(runtime_context, "_readable_skills", [])
         return set(normalize_string_list(selected if isinstance(selected, list) else []))
+
+    def _get_runtime_prompt_metadata(self, runtime_context) -> dict[str, SkillPromptMetadata]:
+        metadata = getattr(runtime_context, "_runtime_skill_metadata", {})
+        return metadata if isinstance(metadata, dict) else {}
+
+    def _get_runtime_dependency_map(self, runtime_context) -> dict[str, SkillDependencyNode]:
+        dependency_map = getattr(runtime_context, "_runtime_skill_dependency_map", {})
+        return dependency_map if isinstance(dependency_map, dict) else {}
 
     def _is_visible_skill_slug(self, request: ToolCallRequest, slug: str) -> bool:
         """检查 slug 是否可见"""

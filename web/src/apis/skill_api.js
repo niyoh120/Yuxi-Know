@@ -1,47 +1,55 @@
-import { apiGet, apiAdminGet, apiAdminPost, apiAdminPut, apiAdminDelete } from './base'
+import { apiGet, apiPost, apiDelete, apiAdminGet, apiAdminPost, apiAdminPut, apiAdminDelete } from './base'
 
 const BASE_URL = '/api/system/skills'
+const USER_BASE_URL = '/api/skills'
 
 export const listSkills = async () => {
   return apiGet(BASE_URL)
 }
 
-export const importSkillZip = async (file) => {
+export const listAccessibleSkills = async () => {
+  return apiGet(`${USER_BASE_URL}/accessible`)
+}
+
+export const prepareSkillUpload = async (file) => {
   const formData = new FormData()
   formData.append('file', file)
-  return apiAdminPost(`${BASE_URL}/import`, formData)
+  return apiPost(`${USER_BASE_URL}/import/prepare`, formData)
 }
 
 export const listRemoteSkills = async (source) => {
-  return apiAdminPost(`${BASE_URL}/remote/list`, { source })
+  return apiPost(`${USER_BASE_URL}/remote/list`, { source })
 }
 
-export const installRemoteSkill = async (payload) => {
-  return apiAdminPost(`${BASE_URL}/remote/install`, payload)
-}
-
-export const installRemoteSkillsBatch = async (payload) => {
-  return apiAdminPost(`${BASE_URL}/remote/install-batch`, payload)
+export const prepareRemoteSkills = async (payload) => {
+  return apiPost(`${USER_BASE_URL}/remote/prepare`, payload)
 }
 
 export const searchRemoteSkills = async (query) => {
-  return apiAdminPost(`${BASE_URL}/remote/search`, { query })
+  return apiPost(`${USER_BASE_URL}/remote/search`, { query })
 }
 
-export const getSkillDependencyOptions = async () => {
-  return apiAdminGet(`${BASE_URL}/dependency-options`)
+export const confirmSkillInstallDraft = async (draftId, shareConfig) => {
+  return apiPost(`${USER_BASE_URL}/install-drafts/${encodeURIComponent(draftId)}/confirm`, {
+    share_config: shareConfig
+  })
+}
+
+export const discardSkillInstallDraft = async (draftId) => {
+  return apiDelete(`${USER_BASE_URL}/install-drafts/${encodeURIComponent(draftId)}`)
+}
+
+export const getSkillDependencyOptions = async (slug) => {
+  const query = slug ? `?slug=${encodeURIComponent(slug)}` : ''
+  return apiAdminGet(`${BASE_URL}/dependency-options${query}`)
 }
 
 export const listBuiltinSkills = async () => {
   return apiAdminGet(`${BASE_URL}/builtin`)
 }
 
-export const installBuiltinSkill = async (slug) => {
-  return apiAdminPost(`${BASE_URL}/builtin/${encodeURIComponent(slug)}/install`)
-}
-
-export const updateBuiltinSkill = async (slug, force = false) => {
-  return apiAdminPost(`${BASE_URL}/builtin/${encodeURIComponent(slug)}/update`, { force })
+export const syncBuiltinSkills = async () => {
+  return apiAdminPost(`${BASE_URL}/builtin/sync`)
 }
 
 export const getSkillTree = async (slug) => {
@@ -66,6 +74,16 @@ export const updateSkillDependencies = async (slug, payload) => {
   return apiAdminPut(`${BASE_URL}/${encodeURIComponent(slug)}/dependencies`, payload)
 }
 
+export const updateSkillShareConfig = async (slug, shareConfig) => {
+  return apiAdminPut(`${BASE_URL}/${encodeURIComponent(slug)}/share-config`, {
+    share_config: shareConfig
+  })
+}
+
+export const updateSkillEnabled = async (slug, enabled) => {
+  return apiAdminPut(`${BASE_URL}/${encodeURIComponent(slug)}/enabled`, { enabled })
+}
+
 export const deleteSkillFile = async (slug, path) => {
   return apiAdminDelete(
     `${BASE_URL}/${encodeURIComponent(slug)}/file?path=${encodeURIComponent(path)}`
@@ -86,20 +104,23 @@ export const deleteSkillsBatch = async (slugs) => {
 
 export const skillApi = {
   listSkills,
-  importSkillZip,
+  listAccessibleSkills,
+  prepareSkillUpload,
   listRemoteSkills,
-  installRemoteSkill,
-  installRemoteSkillsBatch,
+  prepareRemoteSkills,
   searchRemoteSkills,
+  confirmSkillInstallDraft,
+  discardSkillInstallDraft,
   getSkillDependencyOptions,
   listBuiltinSkills,
-  installBuiltinSkill,
-  updateBuiltinSkill,
+  syncBuiltinSkills,
   getSkillTree,
   getSkillFile,
   createSkillFile,
   updateSkillFile,
   updateSkillDependencies,
+  updateSkillShareConfig,
+  updateSkillEnabled,
   deleteSkillFile,
   exportSkill,
   deleteSkill,

@@ -13,6 +13,7 @@ from sqlalchemy.exc import OperationalError
 from yuxi.repositories.agent_run_repository import TERMINAL_RUN_STATUSES, AgentRunRepository
 from yuxi.services.chat_service import stream_agent_chat
 from yuxi.services.mcp_service import ensure_builtin_mcp_servers_in_db
+from yuxi.services.skill_service import init_builtin_skills
 from yuxi.services.run_queue_service import (
     append_run_stream_event,
     clear_cancel_signal,
@@ -369,6 +370,8 @@ async def _worker_startup(ctx):
     await pg_manager.create_business_tables()
     await pg_manager.ensure_business_schema()
     await ensure_builtin_mcp_servers_in_db()
+    async with pg_manager.get_async_session_context() as session:
+        await init_builtin_skills(session)
 
 
 async def _worker_shutdown(ctx):

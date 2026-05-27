@@ -90,7 +90,13 @@
       </div>
     </div>
 
-    <div class="file-content" :class="{contentClass, 'is-iframe-preview': file?.previewType === 'pdf' || (isHtmlFile && htmlPreviewMode === 'render') }">
+    <div
+      class="file-content"
+      :class="[
+        contentClass,
+        { 'is-iframe-preview': file?.previewType === 'pdf' || (isHtmlFile && htmlPreviewMode === 'render') }
+      ]"
+    >
       <div v-if="canEdit && editMode === 'edit'" class="edit-floating-actions">
         <span v-if="draftChanged" class="edit-status-badge">修改未保存</span>
         <button

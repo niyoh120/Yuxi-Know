@@ -208,13 +208,17 @@ class Skill(Base):
     slug = Column(String(128), nullable=False, unique=True, index=True, comment="技能唯一标识（目录名）")
     name = Column(String(128), nullable=False, comment="技能名称（来自 SKILL.md frontmatter.name）")
     description = Column(Text, nullable=False, comment="技能描述（来自 SKILL.md frontmatter.description）")
+    source_type = Column(
+        String(32), nullable=False, default="upload", index=True, comment="来源: builtin/upload/remote"
+    )
     tool_dependencies = Column(JSON, nullable=False, default=list, comment="依赖的内置工具名列表")
     mcp_dependencies = Column(JSON, nullable=False, default=list, comment="依赖的 MCP 服务名列表")
     skill_dependencies = Column(JSON, nullable=False, default=list, comment="依赖的其他 skill slug 列表")
     dir_path = Column(String(512), nullable=False, comment="技能目录路径（相对 save_dir）")
     version = Column(String(64), nullable=True, comment="技能版本（内置 skill 使用语义化版本）")
-    is_builtin = Column(Boolean, nullable=False, default=False, comment="是否为内置 skill")
     content_hash = Column(String(128), nullable=True, comment="技能目录内容哈希（内置 skill 安装时计算）")
+    share_config = Column(JSON, nullable=False, default=dict, comment="共享权限配置")
+    enabled = Column(Boolean, nullable=False, default=True, comment="是否启用")
     created_by = Column(String(64), nullable=True)
     updated_by = Column(String(64), nullable=True)
     created_at = Column(DateTime, default=utc_now_naive)
@@ -226,13 +230,15 @@ class Skill(Base):
             "slug": self.slug,
             "name": self.name,
             "description": self.description,
+            "source_type": self.source_type,
             "tool_dependencies": self.tool_dependencies or [],
             "mcp_dependencies": self.mcp_dependencies or [],
             "skill_dependencies": self.skill_dependencies or [],
             "dir_path": self.dir_path,
             "version": self.version,
-            "is_builtin": self.is_builtin,
             "content_hash": self.content_hash,
+            "share_config": self.share_config or {},
+            "enabled": bool(self.enabled),
             "created_by": self.created_by,
             "updated_by": self.updated_by,
             "created_at": format_utc_datetime(self.created_at),

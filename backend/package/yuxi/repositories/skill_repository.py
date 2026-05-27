@@ -15,6 +15,21 @@ class SkillRepository:
         result = await self.db.execute(select(Skill).order_by(Skill.updated_at.desc(), Skill.id.desc()))
         return list(result.scalars().all())
 
+    async def list_enabled(self) -> list[Skill]:
+        result = await self.db.execute(
+            select(Skill).where(Skill.enabled.is_(True)).order_by(Skill.updated_at.desc(), Skill.id.desc())
+        )
+        return list(result.scalars().all())
+
+    async def list_by_slugs(self, slugs: list[str]) -> list[Skill]:
+        normalized = [slug for slug in dict.fromkeys(slugs) if isinstance(slug, str) and slug]
+        if not normalized:
+            return []
+        result = await self.db.execute(select(Skill).where(Skill.slug.in_(normalized)))
+        items = list(result.scalars().all())
+        item_map = {item.slug: item for item in items}
+        return [item_map[slug] for slug in normalized if slug in item_map]
+
     async def get_by_slug(self, slug: str, *, for_update: bool = False) -> Skill | None:
         stmt = select(Skill).where(Skill.slug == slug)
         if for_update:
@@ -31,12 +46,14 @@ class SkillRepository:
         slug: str,
         name: str,
         description: str,
+        source_type: str,
         tool_dependencies: list[str] | None,
         mcp_dependencies: list[str] | None,
         skill_dependencies: list[str] | None,
         dir_path: str,
+        share_config: dict,
+        enabled: bool = True,
         version: str | None = None,
-        is_builtin: bool = False,
         content_hash: str | None = None,
         created_by: str | None,
     ) -> Skill:
@@ -45,13 +62,15 @@ class SkillRepository:
             slug=slug,
             name=name,
             description=description,
+            source_type=source_type,
             tool_dependencies=tool_dependencies or [],
             mcp_dependencies=mcp_dependencies or [],
             skill_dependencies=skill_dependencies or [],
             dir_path=dir_path,
             version=version,
-            is_builtin=is_builtin,
             content_hash=content_hash,
+            share_config=share_config,
+            enabled=enabled,
             created_by=created_by,
             updated_by=created_by,
             created_at=now,
@@ -72,7 +91,8 @@ class SkillRepository:
     ) -> Skill:
         item.version = version
         item.content_hash = content_hash
-        item.is_builtin = True
+        item.source_type = "builtin"
+        item.share_config = {"access_level": "global", "department_ids": [], "user_uids": []}
         item.updated_by = updated_by
         item.updated_at = utc_now_naive()
         await self.db.commit()
@@ -107,6 +127,22 @@ class SkillRepository:
     ) -> Skill:
         item.name = name
         item.description = description
+        item.updated_by = updated_by
+        item.updated_at = utc_now_naive()
+        await self.db.commit()
+        await self.db.refresh(item)
+        return item
+
+    async def update_share_config(self, item: Skill, *, share_config: dict, updated_by: str | None) -> Skill:
+        item.share_config = share_config
+        item.updated_by = updated_by
+        item.updated_at = utc_now_naive()
+        await self.db.commit()
+        await self.db.refresh(item)
+        return item
+
+    async def update_enabled(self, item: Skill, *, enabled: bool, updated_by: str | None) -> Skill:
+        item.enabled = enabled
         item.updated_by = updated_by
         item.updated_at = utc_now_naive()
         await self.db.commit()

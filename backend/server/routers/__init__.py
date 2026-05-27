@@ -9,7 +9,7 @@ from server.routers.dashboard_router import dashboard
 from server.routers.auth_dept_router import department
 from server.routers.mcp_router import mcp
 from server.routers.model_provider_router import model_providers
-from server.routers.skill_router import skills
+from server.routers.skill_router import skills, user_skills
 from server.routers.subagent_router import subagents_router
 from server.routers.system_router import system
 from server.routers.system_task_router import tasks
@@ -36,6 +36,7 @@ router.include_router(tasks)  # /api/tasks/* 后台任务查询与管理
 router.include_router(mcp)  # /api/system/mcp-servers/* MCP 服务管理
 router.include_router(model_providers)  # /api/system/model-providers/* 独立模型配置
 router.include_router(skills)  # /api/system/skills/* Skills 管理
+router.include_router(user_skills)  # /api/skills/* 用户可用 Skills
 router.include_router(subagents_router)  # /api/system/subagents/* 子智能体管理
 router.include_router(tools)  # /api/system/tools/* 工具列表与配置
 router.include_router(user_router)  # /api/user/* 用户级配置与凭据

@@ -5,7 +5,7 @@
         <template v-if="!isBatchDeleteMode">
           <a-button
             @click="isBatchDeleteMode = true"
-            :disabled="loading || importing || filteredInstalledSkills.length === 0"
+            :disabled="loading || importing || filteredDeletableSkills.length === 0"
             class="lucide-icon-btn"
           >
             <span>批量管理</span>
@@ -54,17 +54,19 @@
       </template>
     </PageShoulder>
 
-    <div
-      v-if="filteredInstalledSkills.length === 0 && filteredUninstalledBuiltinSkills.length === 0"
-      class="extension-card-grid-empty-state"
-    >
-      <a-empty :image="false" description="无匹配技能" />
+    <div v-if="filteredInstalledSkills.length === 0" class="extension-card-grid-empty-state skill-empty-state">
+      <div class="skill-empty-card">
+        <div class="skill-empty-icon">
+          <BookMarked :size="22" />
+        </div>
+        <div class="skill-empty-title">{{ searchQuery ? '没有匹配的 Skill' : '还没有添加 Skill' }}</div>
+        <div class="skill-empty-desc">
+          {{ searchQuery ? '换个关键词试试，或清空搜索条件。' : '可以从远程仓库安装，或上传本地 Skill 文件。' }}
+        </div>
+      </div>
     </div>
 
     <template v-else>
-      <div v-if="filteredInstalledSkills.length" class="extension-section-header">
-        已添加 Skills
-      </div>
       <ExtensionCardGrid>
         <div
           v-for="skill in filteredInstalledSkills"
@@ -76,7 +78,7 @@
           }"
         >
           <a-checkbox
-            v-if="isBatchDeleteMode"
+            v-if="isBatchDeleteMode && skill.sourceType !== 'builtin'"
             :checked="selectedCardSlugs.includes(skill.slug)"
             @change="handleToggleCardSelect(skill.slug)"
             class="card-select-checkbox"
@@ -86,29 +88,12 @@
             :description="skill.description || '暂无描述'"
             :default-icon="BookMarkedIcon"
             :tags="skillTags(skill)"
-            :status="{ label: '已安装', level: 'success' }"
+            :status="skill.status"
             @click="handleCardClick(skill)"
             :class="{ 'card-clickable-select': isBatchDeleteMode }"
           >
           </InfoCard>
         </div>
-      </ExtensionCardGrid>
-
-      <div v-if="filteredUninstalledBuiltinSkills.length" class="extension-section-header">
-        可添加 Skills
-      </div>
-      <ExtensionCardGrid v-if="filteredUninstalledBuiltinSkills.length">
-        <InfoCard
-          v-for="skill in filteredUninstalledBuiltinSkills"
-          :key="skill.slug"
-          :title="skill.name"
-          :description="skill.description || '暂无描述'"
-          :default-icon="BookMarkedIcon"
-          :tags="[{ name: '内置' }]"
-          action-label="安装"
-          @action-click="handleInstallBuiltin(skill)"
-        >
-        </InfoCard>
       </ExtensionCardGrid>
     </template>
 
@@ -122,8 +107,7 @@
       :keyboard="!installingRemoteSkill"
     >
       <div class="remote-install-panel modal-mode">
-        <!-- 阶段一：选择配置阶段 -->
-        <div v-if="!remoteInstallProgress.visible" class="install-setup-stage">
+        <div class="install-setup-stage">
           <a-tabs
             v-model:activeKey="activeTab"
             :disabled="installingRemoteSkill"
@@ -383,68 +367,58 @@
               "
               @click="startInstallRemoteSkills"
             >
-              开始安装 (已选
+              解析并确认 (已选
               {{ activeTab === 'repo' ? selectedRepoSkills.length : selectedSearchSkills.length }}
               个)
             </a-button>
           </div>
         </div>
+      </div>
+    </a-modal>
 
-        <!-- 阶段二：安装进度展示阶段 -->
-        <div v-else class="install-run-stage">
-          <div class="install-progress-section">
-            <div class="progress-info-row">
-              <span class="progress-title">批量安装进度</span>
-              <span class="progress-text"
-                >{{ remoteInstallProgress.completed }} / {{ remoteInstallProgress.total }}</span
-              >
-            </div>
-            <a-progress
-              :percent="
-                Math.round(
-                  (remoteInstallProgress.completed / Math.max(1, remoteInstallProgress.total)) * 100
-                )
-              "
-              size="small"
-              :status="remoteInstallProgress.failed > 0 ? 'exception' : 'active'"
-            />
-            <div v-if="remoteInstallProgress.currentSkill" class="progress-detail">
-              {{ remoteInstallProgress.currentSkill }}
-            </div>
-
-            <!-- 详细报告列表 -->
-            <div v-if="installReportList.length" class="install-results-report">
-              <div class="report-title">安装报告：</div>
-              <div class="report-items-container">
-                <div
-                  v-for="res in installReportList"
-                  :key="res.slug"
-                  class="report-item"
-                  :class="{ success: res.success, fail: !res.success }"
-                >
-                  <span class="skill-slug">{{ res.slug }}</span>
-                  <span class="install-status">{{
-                    res.success ? '安装成功' : `安装失败: ${res.error}`
-                  }}</span>
-                </div>
+    <a-modal
+      v-model:open="draftConfirmVisible"
+      title="确认添加 Skill"
+      width="720px"
+      :confirm-loading="draftConfirmLoading"
+      :closable="!draftConfirmLoading"
+      :mask-closable="!draftConfirmLoading"
+      :keyboard="!draftConfirmLoading"
+      ok-text="确认添加"
+      cancel-text="取消"
+      @ok="confirmSkillDraft"
+      @cancel="cancelSkillDraft"
+    >
+      <div v-if="pendingDraft" class="skill-draft-confirm-panel">
+        <div class="draft-source-row">
+          <span class="draft-source-label">来源</span>
+          <span>{{ pendingDraft.source || sourceTypeLabel(pendingDraft.source_type) }}</span>
+        </div>
+        <div class="draft-items-list">
+          <div
+            v-for="item in pendingDraft.items"
+            :key="`${item.source || pendingDraft.source || 'local'}:${item.slug || item.name}`"
+            class="draft-item"
+            :class="{ failed: item.success === false }"
+          >
+            <div class="draft-item-main">
+              <div class="draft-item-title">{{ item.name || item.slug }}</div>
+              <div class="draft-item-desc">{{ item.description || item.error || '暂无描述' }}</div>
+              <div v-if="item.warnings?.length" class="draft-item-warning">
+                {{ item.warnings.join('；') }}
               </div>
             </div>
-          </div>
-
-          <!-- 进度阶段的底部操作区 -->
-          <div class="modal-footer-actions">
-            <a-button
-              v-if="!installingRemoteSkill && remoteInstallProgress.failed > 0"
-              @click="handleBackToSetup"
-            >
-              返回修改
-            </a-button>
-            <a-button v-if="!installingRemoteSkill" type="primary" @click="handleCloseAfterInstall">
-              完成
-            </a-button>
-            <span v-else class="installing-hint-text">正在进行后台拉取安装，请勿关闭窗口...</span>
+            <a-tag v-if="item.success === false" color="red">解析失败</a-tag>
+            <a-tag v-else color="blue">{{ sourceTypeLabel(item.source_type || pendingDraft.source_type) }}</a-tag>
           </div>
         </div>
+        <div class="draft-share-title">生效范围</div>
+        <ShareConfigForm
+          ref="shareConfigFormRef"
+          v-model="draftShareConfig"
+          :auto-select-user-dept="true"
+          :allowed-access-levels="pendingDraft.allowed_access_levels || ['user']"
+        />
       </div>
     </a-modal>
   </div>
@@ -459,6 +433,7 @@ import { skillApi } from '@/apis/skill_api'
 import ExtensionCardGrid from './ExtensionCardGrid.vue'
 import InfoCard from '@/components/shared/InfoCard.vue'
 import PageShoulder from '@/components/shared/PageShoulder.vue'
+import ShareConfigForm from '@/components/ShareConfigForm.vue'
 
 const BookMarkedIcon = BookMarked
 
@@ -474,7 +449,6 @@ const isBatchDeleteMode = ref(false)
 const selectedCardSlugs = ref([])
 
 const skills = ref([])
-const builtinSkills = ref([])
 
 const remoteInstallModalVisible = ref(false)
 const activeTab = ref('repo') // 'repo' 或 'search'
@@ -493,16 +467,12 @@ const searchedSkills = ref([])
 const selectedSearchSkills = ref([])
 
 const repoHistory = ref([])
-
-const remoteInstallProgress = reactive({
-  visible: false,
-  total: 0,
-  completed: 0,
-  success: 0,
-  failed: 0,
-  currentSkill: ''
-})
-const installReportList = ref([])
+const allowedSkillAccessLevels = ref(['user'])
+const draftConfirmVisible = ref(false)
+const draftConfirmLoading = ref(false)
+const pendingDraft = ref(null)
+const draftShareConfig = ref({ access_level: 'user', department_ids: [], user_uids: [] })
+const shareConfigFormRef = ref(null)
 
 const matchesSearch = (skill) => {
   if (!searchQuery.value) return true
@@ -510,41 +480,23 @@ const matchesSearch = (skill) => {
   return skill.name.toLowerCase().includes(q) || skill.slug.toLowerCase().includes(q)
 }
 
-const installedSkillCards = computed(() => {
-  const builtinInstalledMap = new Map(
-    (builtinSkills.value || [])
-      .filter((skill) => skill.status !== 'not_installed')
-      .map((skill) => [
-        skill.slug,
-        {
-          ...skill,
-          sourceType: 'builtin',
-          sourceLabel: '内置',
-          status:
-            skill.status === 'update_available'
-              ? { label: '更新可用', level: 'warning' }
-              : { label: '已安装', level: 'success' }
-        }
-      ])
-  )
-  const importedInstalled = (skills.value || [])
-    .filter((skill) => !builtinInstalledMap.has(skill.slug))
-    .map((skill) => ({
+const installedSkillCards = computed(() =>
+  (skills.value || []).map((skill) => {
+    const sourceType = skill.source_type || 'upload'
+    return {
       ...skill,
-      sourceType: 'imported',
-      sourceLabel: '导入',
-      status: { label: '已上传', level: 'success' }
-    }))
-  return [...builtinInstalledMap.values(), ...importedInstalled]
-})
+      sourceType,
+      sourceLabel: sourceTypeLabel(sourceType),
+      status:
+        skill.enabled === false ? { label: '已禁用', level: 'default' } : { label: '已启用', level: 'success' }
+    }
+  })
+)
 
 const filteredInstalledSkills = computed(() => installedSkillCards.value.filter(matchesSearch))
-
-const filteredUninstalledBuiltinSkills = computed(() => {
-  return (builtinSkills.value || []).filter(
-    (skill) => skill.status === 'not_installed' && matchesSearch(skill)
-  )
-})
+const filteredDeletableSkills = computed(() =>
+  filteredInstalledSkills.value.filter((skill) => skill.sourceType !== 'builtin')
+)
 
 // 仓库拉取的技能列表过滤
 const filteredRepoSkills = computed(() => {
@@ -556,16 +508,6 @@ const filteredRepoSkills = computed(() => {
       (item.description && item.description.toLowerCase().includes(kw))
   )
 })
-
-const resetRemoteInstallState = () => {
-  remoteInstallProgress.visible = false
-  remoteInstallProgress.total = 0
-  remoteInstallProgress.completed = 0
-  remoteInstallProgress.success = 0
-  remoteInstallProgress.failed = 0
-  remoteInstallProgress.currentSkill = ''
-  installReportList.value = []
-}
 
 // 批量选择/反选/清空管理
 const handleRepoSelectAll = () => {
@@ -629,6 +571,12 @@ const handleToggleSearchSkill = (item, checked) => {
   }
 }
 
+const sourceTypeLabel = (sourceType) => {
+  if (sourceType === 'builtin') return '内置'
+  if (sourceType === 'remote') return '远程'
+  return '上传'
+}
+
 const skillTags = (skill) => {
   if (skill.sourceType === 'builtin') return [{ name: skill.sourceLabel || '内置' }]
   return [{ name: skill.sourceLabel || '外部', color: 'blue' }]
@@ -647,6 +595,8 @@ const handleCardClick = (skill) => {
 }
 
 const handleToggleCardSelect = (slug) => {
+  const target = installedSkillCards.value.find((skill) => skill.slug === slug)
+  if (target?.sourceType === 'builtin') return
   const idx = selectedCardSlugs.value.indexOf(slug)
   if (idx > -1) {
     selectedCardSlugs.value.splice(idx, 1)
@@ -656,7 +606,9 @@ const handleToggleCardSelect = (slug) => {
 }
 
 const handleBatchSelectAll = () => {
-  selectedCardSlugs.value = filteredInstalledSkills.value.map((skill) => skill.slug)
+  selectedCardSlugs.value = filteredInstalledSkills.value
+    .filter((skill) => skill.sourceType !== 'builtin')
+    .map((skill) => skill.slug)
 }
 
 const handleBatchSelectNone = () => {
@@ -667,7 +619,7 @@ const handleBatchSelectInvert = () => {
   const currentSet = new Set(selectedCardSlugs.value)
   const nextSelected = []
   filteredInstalledSkills.value.forEach((skill) => {
-    if (!currentSet.has(skill.slug)) {
+    if (skill.sourceType !== 'builtin' && !currentSet.has(skill.slug)) {
       nextSelected.push(skill.slug)
     }
   })
@@ -680,18 +632,22 @@ const exitBatchDeleteMode = () => {
 }
 
 const handleBatchDelete = () => {
-  if (selectedCardSlugs.value.length === 0) return
+  const deletableSlugs = selectedCardSlugs.value.filter((slug) => {
+    const target = installedSkillCards.value.find((skill) => skill.slug === slug)
+    return target?.sourceType !== 'builtin'
+  })
+  if (deletableSlugs.length === 0) return
 
   Modal.confirm({
     title: '确定要批量删除选中的技能吗？',
-    content: `您已选中了 ${selectedCardSlugs.value.length} 个技能。该操作将从数据库和物理磁盘中彻底删除这些技能包，且不可恢复！`,
+    content: `您已选中了 ${deletableSlugs.length} 个技能。该操作将从数据库和物理磁盘中彻底删除这些技能包，且不可恢复！`,
     okText: '确定删除',
     okType: 'danger',
     cancelText: '取消',
     onOk: async () => {
       loading.value = true
       try {
-        const res = await skillApi.deleteSkillsBatch(selectedCardSlugs.value)
+        const res = await skillApi.deleteSkillsBatch(deletableSlugs)
         const results = res?.data || []
         const successList = results.filter((r) => r.success)
         const failList = results.filter((r) => !r.success)
@@ -716,32 +672,11 @@ const handleBatchDelete = () => {
 const fetchSkills = async () => {
   loading.value = true
   try {
-    const [skillResult, builtinResult] = await Promise.all([
-      skillApi.listSkills(),
-      skillApi.listBuiltinSkills()
-    ])
+    const skillResult = await skillApi.listSkills()
     skills.value = skillResult?.data || []
-    builtinSkills.value = (builtinResult?.data || []).map((item) => ({
-      ...item,
-      ...(item.installed_record || {}),
-      is_builtin_spec: true
-    }))
+    allowedSkillAccessLevels.value = skillResult?.allowed_access_levels || ['user']
   } catch {
     message.error('加载失败')
-  } finally {
-    loading.value = false
-  }
-}
-
-const handleInstallBuiltin = async (record) => {
-  if (!record?.slug) return
-  loading.value = true
-  try {
-    await skillApi.installBuiltinSkill(record.slug)
-    await fetchSkills()
-    message.success('安装成功')
-  } catch (error) {
-    message.error(error?.response?.data?.detail || error.message || '安装失败')
   } finally {
     loading.value = false
   }
@@ -756,15 +691,103 @@ const beforeSkillUpload = (file) => {
   return true
 }
 
+const cloneShareConfig = (config) => ({
+  access_level: config?.access_level || 'user',
+  department_ids: [...(config?.department_ids || [])],
+  user_uids: [...(config?.user_uids || [])]
+})
+
+const resetDraftConfirmation = () => {
+  draftConfirmVisible.value = false
+  draftConfirmLoading.value = false
+  pendingDraft.value = null
+  draftShareConfig.value = { access_level: 'user', department_ids: [], user_uids: [] }
+}
+
+const normalizePendingDraft = (draftPayload) => {
+  const drafts = Array.isArray(draftPayload) ? draftPayload : [draftPayload]
+  const validDrafts = drafts.filter((item) => item?.draft_id)
+  const first = validDrafts[0] || {}
+  return {
+    ...first,
+    draft_ids: validDrafts.map((item) => item.draft_id),
+    source: validDrafts.length === 1 ? first.source : `${validDrafts.length} 个来源`,
+    items: validDrafts.flatMap((draft) =>
+      (draft.items || []).map((item) => ({
+        ...item,
+        source: draft.source,
+        source_type: draft.source_type
+      }))
+    ),
+    default_share_config: first.default_share_config || cloneShareConfig(null),
+    allowed_access_levels: first.allowed_access_levels || allowedSkillAccessLevels.value
+  }
+}
+
+const openDraftConfirmation = async (draftPayload) => {
+  const draft = normalizePendingDraft(draftPayload)
+  if (!draft.draft_ids.length || !draft.items.some((item) => item.success !== false)) {
+    await Promise.allSettled(draft.draft_ids.map((draftId) => skillApi.discardSkillInstallDraft(draftId)))
+    message.error('没有可添加的 Skill')
+    return false
+  }
+  pendingDraft.value = draft
+  draftShareConfig.value = cloneShareConfig(draft.default_share_config)
+  draftConfirmVisible.value = true
+  return true
+}
+
+const cancelSkillDraft = async () => {
+  if (draftConfirmLoading.value) return
+  const draftIds = pendingDraft.value?.draft_ids || []
+  resetDraftConfirmation()
+  await Promise.allSettled(draftIds.map((draftId) => skillApi.discardSkillInstallDraft(draftId)))
+}
+
+const confirmSkillDraft = async () => {
+  const validation = shareConfigFormRef.value?.validate?.()
+  if (validation && !validation.valid) {
+    message.warning(validation.message || '请完善 Skill 生效范围')
+    return
+  }
+
+  const draftIds = pendingDraft.value?.draft_ids || []
+  if (!draftIds.length) return
+
+  draftConfirmLoading.value = true
+  try {
+    const results = []
+    for (const draftId of draftIds) {
+      const res = await skillApi.confirmSkillInstallDraft(draftId, draftShareConfig.value)
+      results.push(...(res?.data || []))
+    }
+    const successCount = results.filter((item) => item.success).length
+    const failedCount = results.length - successCount
+    if (failedCount === 0) {
+      message.success(`已添加 ${successCount} 个 Skill`)
+    } else {
+      message.warning(`添加完成：成功 ${successCount} 个，失败 ${failedCount} 个`)
+    }
+    remoteInstallModalVisible.value = false
+    resetDraftConfirmation()
+    await fetchSkills()
+  } catch (error) {
+    message.error(error?.response?.data?.detail || error.message || '确认添加 Skill 失败')
+  } finally {
+    draftConfirmLoading.value = false
+  }
+}
+
 const handleImportUpload = async ({ file, onSuccess, onError }) => {
   importing.value = true
   try {
-    const result = await skillApi.importSkillZip(file)
-    message.success('导入完成')
-    await fetchSkills()
+    const result = await skillApi.prepareSkillUpload(file)
+    if (await openDraftConfirmation(result?.data)) {
+      message.success('解析完成，请确认 Skill 生效范围')
+    }
     onSuccess?.(result)
   } catch (e) {
-    message.error('导入失败')
+    message.error(e?.response?.data?.detail || e.message || '解析 Skill 失败')
     onError?.(e)
   } finally {
     importing.value = false
@@ -773,7 +796,6 @@ const handleImportUpload = async ({ file, onSuccess, onError }) => {
 
 const handleOpenRemoteInstall = () => {
   if (!remoteInstallModalVisible.value) {
-    resetRemoteInstallState()
     selectedRepoSkills.value = []
     selectedSearchSkills.value = []
     remoteSkillOptions.value = []
@@ -875,152 +897,48 @@ const handleSearchRemoteSkills = async () => {
 }
 
 const startInstallRemoteSkills = async () => {
-  resetRemoteInstallState()
   installingRemoteSkill.value = true
-  remoteInstallProgress.visible = true
 
-  if (activeTab.value === 'repo') {
-    const source = remoteInstallForm.source.trim()
-    const skillsToInstall = [...selectedRepoSkills.value]
-    remoteInstallProgress.total = skillsToInstall.length
-    remoteInstallProgress.currentSkill = '正在开始下载远程 Skills 并写入系统...'
-
-    try {
-      const result = await skillApi.installRemoteSkillsBatch({
-        source,
-        skills: skillsToInstall
-      })
-      const results = result?.data || []
-      results.forEach((r) => {
-        installReportList.value.push({
-          slug: r.slug,
-          success: r.success,
-          error: r.error || ''
-        })
-        if (r.success) {
-          remoteInstallProgress.success++
-        } else {
-          remoteInstallProgress.failed++
-        }
-        remoteInstallProgress.completed++
+  try {
+    const drafts = []
+    if (activeTab.value === 'repo') {
+      const source = remoteInstallForm.source.trim()
+      const skillsToInstall = [...selectedRepoSkills.value]
+      const result = await skillApi.prepareRemoteSkills({ source, skills: skillsToInstall })
+      drafts.push(result?.data)
+    } else {
+      const groups = {}
+      selectedSearchSkills.value.forEach((item) => {
+        if (!groups[item.source]) groups[item.source] = []
+        groups[item.source].push(item.name)
       })
 
-      await fetchSkills()
-      if (remoteInstallProgress.failed === 0) {
-        message.success('所有选中的 Skills 安装成功')
-        setTimeout(() => {
-          remoteInstallModalVisible.value = false
-        }, 1500)
-      } else {
-        message.warning(
-          `安装完成，成功 ${remoteInstallProgress.success} 个，失败 ${remoteInstallProgress.failed} 个`
-        )
+      for (const [source, sourceSkills] of Object.entries(groups)) {
+        const result = await skillApi.prepareRemoteSkills({ source, skills: sourceSkills })
+        drafts.push(result?.data)
       }
-    } catch (error) {
-      message.error(error?.response?.data?.detail || error.message || '远程 Skill 安装失败')
-      skillsToInstall.forEach((slug) => {
-        installReportList.value.push({
-          slug,
-          success: false,
-          error: error.message || '安装失败'
-        })
-        remoteInstallProgress.failed++
-        remoteInstallProgress.completed++
-      })
-    } finally {
-      remoteInstallProgress.currentSkill = ''
-      installingRemoteSkill.value = false
     }
-  } else {
-    const skillsToInstall = [...selectedSearchSkills.value]
-    remoteInstallProgress.total = skillsToInstall.length
 
-    // 按 source 分组
-    const groups = {}
-    skillsToInstall.forEach((item) => {
-      if (!groups[item.source]) groups[item.source] = []
-      groups[item.source].push(item.name)
-    })
-
-    const sources = Object.keys(groups)
-
-    try {
-      for (const source of sources) {
-        const sourceSkills = groups[source]
-        remoteInstallProgress.currentSkill = `正在下载并安装来自 ${source} 的技能...`
-
-        try {
-          const result = await skillApi.installRemoteSkillsBatch({
-            source,
-            skills: sourceSkills
-          })
-          const results = result?.data || []
-          results.forEach((r) => {
-            installReportList.value.push({
-              slug: `${source}@${r.slug}`,
-              success: r.success,
-              error: r.error || ''
-            })
-            if (r.success) {
-              remoteInstallProgress.success++
-            } else {
-              remoteInstallProgress.failed++
-            }
-            remoteInstallProgress.completed++
-          })
-        } catch (error) {
-          sourceSkills.forEach((name) => {
-            installReportList.value.push({
-              slug: `${source}@${name}`,
-              success: false,
-              error: error.message || '安装请求失败'
-            })
-            remoteInstallProgress.failed++
-            remoteInstallProgress.completed++
-          })
-        }
-      }
-
-      await fetchSkills()
-      if (remoteInstallProgress.failed === 0) {
-        message.success('所有选中的 Skills 安装成功')
-        setTimeout(() => {
-          remoteInstallModalVisible.value = false
-        }, 1500)
-      } else {
-        message.warning(
-          `安装完成，成功 ${remoteInstallProgress.success} 个，失败 ${remoteInstallProgress.failed} 个`
-        )
-      }
-    } finally {
-      remoteInstallProgress.currentSkill = ''
-      installingRemoteSkill.value = false
+    if (await openDraftConfirmation(drafts)) {
+      remoteInstallModalVisible.value = false
+      message.success('解析完成，请确认 Skill 生效范围')
     }
+  } catch (error) {
+    message.error(error?.response?.data?.detail || error.message || '解析远程 Skill 失败')
+  } finally {
+    installingRemoteSkill.value = false
   }
-}
-
-const handleBackToSetup = () => {
-  remoteInstallProgress.visible = false
-}
-
-const handleCloseAfterInstall = () => {
-  remoteInstallModalVisible.value = false
-  resetRemoteInstallState()
-  selectedRepoSkills.value = []
-  selectedSearchSkills.value = []
 }
 
 watch(activeTab, () => {
   selectedRepoSkills.value = []
   selectedSearchSkills.value = []
-  resetRemoteInstallState()
 })
 
 watch(remoteInstallModalVisible, (visible) => {
   if (!visible && !installingRemoteSkill.value) {
     selectedRepoSkills.value = []
     selectedSearchSkills.value = []
-    resetRemoteInstallState()
   }
 })
 
@@ -1042,19 +960,52 @@ defineExpose({
 </style>
 
 <style lang="less" scoped>
-.extension-card-grid-empty-state {
-  background: linear-gradient(180deg, var(--gray-0) 0%, var(--gray-50) 100%);
-  border: 1px solid var(--gray-150);
-  border-radius: 12px;
-  padding: 16px;
-
-  &.modal-mode {
-    border: none;
-    border-radius: 0;
-    padding: 0;
-    background: transparent;
-  }
+.skill-empty-state {
+  width: 100%;
+  min-height: 280px;
+  padding: 40px var(--page-padding);
 }
+
+.skill-empty-card {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 220px;
+  flex-direction: column;
+  border: 1px dashed var(--gray-150);
+  border-radius: 16px;
+  background: linear-gradient(180deg, var(--gray-0) 0%, var(--gray-25) 100%);
+  color: var(--gray-500);
+  text-align: center;
+}
+
+.skill-empty-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  margin-bottom: 12px;
+  border-radius: 14px;
+  background: var(--main-10);
+  color: var(--main-color);
+}
+
+.skill-empty-title {
+  color: var(--gray-800);
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 22px;
+}
+
+.skill-empty-desc {
+  margin-top: 4px;
+  color: var(--gray-500);
+  font-size: 13px;
+  line-height: 20px;
+}
+
 
 .card-wrapper {
   position: relative;
@@ -1091,23 +1042,70 @@ defineExpose({
   }
 }
 
-.remote-install-panel {
-  .panel-header-text {
+.skill-draft-confirm-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+
+  .draft-source-row {
+    display: flex;
+    gap: 8px;
+    color: var(--gray-700);
+    font-size: 13px;
+  }
+
+  .draft-source-label,
+  .draft-share-title {
+    color: var(--gray-500);
+    font-weight: 600;
+  }
+
+  .draft-items-list {
     display: flex;
     flex-direction: column;
-    gap: 4px;
-    margin-bottom: 12px;
+    gap: 8px;
+    max-height: 260px;
+    overflow: auto;
+  }
 
-    .desc {
-      font-size: 12px;
-      color: var(--gray-500);
-      a {
-        color: var(--main-color);
-        text-decoration: underline;
-      }
+  .draft-item {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px;
+    border: 1px solid var(--gray-150);
+    border-radius: 10px;
+    background: var(--gray-0);
+
+    &.failed {
+      border-color: var(--error-200, #ffccc7);
+      background: var(--error-50, #fff2f0);
     }
   }
 
+  .draft-item-main {
+    min-width: 0;
+  }
+
+  .draft-item-title {
+    font-weight: 600;
+    color: var(--gray-900);
+  }
+
+  .draft-item-desc,
+  .draft-item-warning {
+    margin-top: 4px;
+    font-size: 12px;
+    color: var(--gray-500);
+  }
+
+  .draft-item-warning {
+    color: var(--warning-600, #d48806);
+  }
+}
+
+.remote-install-panel {
   .repo-input-row {
     display: flex;
     gap: 8px;
@@ -1176,9 +1174,6 @@ defineExpose({
     padding: 4px 0 8px 0;
   }
 
-  .search-form-item {
-    margin-bottom: 8px !important;
-  }
 
   .skills-list-section {
     margin-top: 12px;
@@ -1315,88 +1310,6 @@ defineExpose({
     }
   }
 
-  .install-progress-section {
-    margin-top: 16px;
-    padding: 12px;
-    background: var(--gray-25);
-    border: 1px solid var(--gray-150);
-    border-radius: 8px;
-
-    .progress-info-row {
-      display: flex;
-      justify-content: space-between;
-      font-size: 13px;
-      margin-bottom: 8px;
-
-      .progress-title {
-        font-weight: 600;
-        color: var(--gray-900);
-      }
-
-      .progress-text {
-        color: var(--gray-600);
-      }
-    }
-
-    .progress-detail {
-      margin-top: 8px;
-      font-size: 12px;
-      color: var(--main-color);
-    }
-  }
-
-  .install-results-report {
-    margin-top: 12px;
-
-    .report-title {
-      font-size: 12px;
-      font-weight: 600;
-      color: var(--gray-800);
-      margin-bottom: 6px;
-    }
-
-    .report-items-container {
-      max-height: 120px;
-      overflow-y: auto;
-      border: 1px solid var(--gray-150);
-      border-radius: 6px;
-      background: var(--gray-0);
-      padding: 6px;
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
-    }
-
-    .report-item {
-      display: flex;
-      justify-content: space-between;
-      padding: 4px 6px;
-      border-radius: 4px;
-      font-size: 12px;
-
-      &.success {
-        background: var(--color-success-10);
-        .skill-slug {
-          color: var(--color-success-700);
-          font-weight: 500;
-        }
-        .install-status {
-          color: var(--color-success-700);
-        }
-      }
-
-      &.fail {
-        background: var(--color-error-10);
-        .skill-slug {
-          color: var(--color-error-700);
-          font-weight: 500;
-        }
-        .install-status {
-          color: var(--color-error-700);
-        }
-      }
-    }
-  }
 
   .modal-footer-actions {
     display: flex;

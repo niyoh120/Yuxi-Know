@@ -104,7 +104,7 @@ async def test_normalize_agent_context_config_expands_null_and_filters_explicit_
             types.SimpleNamespace(slug="mcp-b", name="MCP B", description="", enabled=True),
         ]
 
-    async def fake_list_skills(_db):
+    async def fake_list_skills(_db, _user):
         return [
             types.SimpleNamespace(slug="skill-a", name="Skill A", description=""),
             types.SimpleNamespace(slug="skill-b", name="Skill B", description=""),
@@ -120,7 +120,7 @@ async def test_normalize_agent_context_config_expands_null_and_filters_explicit_
         sys.modules,
         "yuxi.services.tool_service",
         types.SimpleNamespace(
-            get_tool_metadata=lambda: [
+            get_tool_metadata=lambda category=None: [
                 {"slug": "ask_user_question", "name": "Ask User", "description": ""},
                 {"slug": "tavily_search", "name": "Tavily", "description": ""},
             ]
@@ -139,7 +139,7 @@ async def test_normalize_agent_context_config_expands_null_and_filters_explicit_
     monkeypatch.setitem(
         sys.modules,
         "yuxi.services.skill_service",
-        types.SimpleNamespace(list_skills=fake_list_skills),
+        types.SimpleNamespace(list_accessible_skills=fake_list_skills),
     )
     monkeypatch.setitem(
         sys.modules,
@@ -176,7 +176,7 @@ async def test_prepare_agent_runtime_context_filters_resources_and_derives_runti
     async def fake_get_all_mcp_servers(_db):
         return [types.SimpleNamespace(slug="mcp-a", name="MCP A", description="", enabled=True)]
 
-    async def fake_list_skills(_db):
+    async def fake_list_skills(_db, _user):
         return [
             types.SimpleNamespace(slug="skill-a", name="Skill A", description=""),
             types.SimpleNamespace(slug="skill-b", name="Skill B", description=""),
@@ -190,13 +190,16 @@ async def test_prepare_agent_runtime_context_filters_resources_and_derives_runti
         context._visible_knowledge_bases = [{"slug": "kb-a", "name": "Docs A"}]
         return context._visible_knowledge_bases
 
-    async def fake_resolve_runtime_skills_for_context(context, *, db=None):
+    async def fake_resolve_runtime_skills_for_context(context, *, db=None, user=None):
         del db
+        assert user.uid == "u1"
         assert context.skills == ["skill-a"]
         return {
             "context_skills": ["skill-a"],
             "prompt_skills": ["skill-a", "skill-b"],
             "readable_skills": ["skill-a", "skill-b"],
+            "runtime_skill_metadata": {"skill-a": {"name": "Skill A"}},
+            "runtime_skill_dependency_map": {"skill-a": {"skills": ["skill-b"]}},
         }
 
     class FakeSessionContext:
@@ -209,7 +212,7 @@ async def test_prepare_agent_runtime_context_filters_resources_and_derives_runti
     class FakeUserRepository:
         async def get_by_uid_with_db(self, _db, uid):
             assert uid == "u1"
-            return types.SimpleNamespace(role="user", uid="u1")
+            return types.SimpleNamespace(role="user", uid="u1", department_id=None)
 
     monkeypatch.setitem(
         sys.modules,
@@ -235,7 +238,9 @@ async def test_prepare_agent_runtime_context_filters_resources_and_derives_runti
         sys.modules,
         "yuxi.services.tool_service",
         types.SimpleNamespace(
-            get_tool_metadata=lambda: [{"slug": "ask_user_question", "name": "Ask User", "description": ""}]
+            get_tool_metadata=lambda category=None: [
+                {"slug": "ask_user_question", "name": "Ask User", "description": ""}
+            ]
         ),
     )
     monkeypatch.setitem(
@@ -251,7 +256,7 @@ async def test_prepare_agent_runtime_context_filters_resources_and_derives_runti
     monkeypatch.setitem(
         sys.modules,
         "yuxi.services.skill_service",
-        types.SimpleNamespace(list_skills=fake_list_skills),
+        types.SimpleNamespace(list_accessible_skills=fake_list_skills),
     )
     monkeypatch.setitem(
         sys.modules,
@@ -278,6 +283,8 @@ async def test_prepare_agent_runtime_context_filters_resources_and_derives_runti
     assert prepared._visible_knowledge_bases == [{"slug": "kb-a", "name": "Docs A"}]
     assert prepared._prompt_skills == ["skill-a", "skill-b"]
     assert prepared._readable_skills == ["skill-a", "skill-b"]
+    assert prepared._runtime_skill_metadata == {"skill-a": {"name": "Skill A"}}
+    assert prepared._runtime_skill_dependency_map == {"skill-a": {"skills": ["skill-b"]}}
 
 
 @pytest.mark.asyncio
@@ -301,7 +308,7 @@ async def test_prepare_agent_runtime_context_clears_resources_for_missing_user(m
     monkeypatch.setitem(
         sys.modules,
         "yuxi.agents.middlewares.skills_middleware",
-        types.SimpleNamespace(resolve_runtime_skills_for_context=lambda _context, db=None: None),
+        types.SimpleNamespace(resolve_runtime_skills_for_context=lambda _context, db=None, user=None: None),
     )
     monkeypatch.setitem(
         sys.modules,
@@ -333,3 +340,5 @@ async def test_prepare_agent_runtime_context_clears_resources_for_missing_user(m
     assert prepared._visible_knowledge_bases == []
     assert prepared._prompt_skills == []
     assert prepared._readable_skills == []
+    assert prepared._runtime_skill_metadata == {}
+    assert prepared._runtime_skill_dependency_map == {}

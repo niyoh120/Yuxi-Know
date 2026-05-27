@@ -45,7 +45,7 @@
           :aria-label="treePaneVisible ? '隐藏文件列表' : '查看文件列表'"
           @click="toggleFileTree"
         >
-          <FolderKanban :size="15" />
+          <Folders :size="15" />
         </button>
         <button class="header-action-btn" title="刷新" aria-label="刷新" @click="emitRefresh">
           <RefreshCw :size="15" />
@@ -130,7 +130,7 @@
 
 <script setup>
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { Download, FolderKanban, RefreshCw, Trash2, X } from 'lucide-vue-next'
+import { Download, Folders, RefreshCw, Trash2, X } from 'lucide-vue-next'
 import { Modal, message } from 'ant-design-vue'
 import FileTreeComponent from '@/components/FileTreeComponent.vue'
 import AgentFilePreview from '@/components/AgentFilePreview.vue'

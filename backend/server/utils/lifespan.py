@@ -35,6 +35,14 @@ async def lifespan(app: FastAPI):
         logger.error(f"Failed to ensure builtin MCP servers during startup: {e}")
 
     try:
+        from yuxi.services.skill_service import init_builtin_skills
+
+        async with pg_manager.get_async_session_context() as session:
+            await init_builtin_skills(session)
+    except Exception as e:
+        logger.error(f"Failed to initialize builtin skills during startup: {e}")
+
+    try:
         from yuxi.repositories.agent_repository import AgentRepository
 
         async with pg_manager.get_async_session_context() as session:
