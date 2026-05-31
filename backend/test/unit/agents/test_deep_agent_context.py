@@ -3,22 +3,10 @@ from pathlib import Path
 
 
 def test_deep_agent_uses_deep_context_schema():
-    graph_path = (
-        Path(__file__).parents[3] / "package" / "yuxi" / "agents" / "buildin" / "deep_agent" / "graph.py"
-    )
-    module = ast.parse(graph_path.read_text(encoding="utf-8"))
-    deep_agent = next(
-        node for node in module.body if isinstance(node, ast.ClassDef) and node.name == "DeepAgent"
-    )
-    context_schema = next(
-        node
-        for node in deep_agent.body
-        if isinstance(node, ast.Assign)
-        and any(isinstance(target, ast.Name) and target.id == "context_schema" for target in node.targets)
-    )
+    from yuxi.agents.buildin.deep_agent.graph import DeepAgent
+    from yuxi.agents.buildin.deep_agent.context import DeepContext
 
-    assert isinstance(context_schema.value, ast.Name)
-    assert context_schema.value.id == "DeepContext"
+    assert DeepAgent.context_schema is DeepContext
 
 
 def test_deep_agent_does_not_prepend_context_system_prompt_before_runtime_middleware():
