@@ -55,6 +55,32 @@ def normalize_after_seq(after_seq: str | None) -> str:
     return "0-0"
 
 
+def build_run_event_envelope(
+    *,
+    run_id: str,
+    event_type: str,
+    payload: dict | None = None,
+    thread_id: str | None = None,
+    created_at: str | None = None,
+) -> dict:
+    return {
+        "schema_version": 1,
+        "run_id": run_id,
+        "thread_id": thread_id,
+        "event": event_type,
+        "payload": payload or {},
+        "created_at": created_at or datetime.now(tz=UTC).isoformat(),
+    }
+
+
+def _payload_thread_id(payload: dict | None) -> str | None:
+    chunk = payload.get("chunk") if isinstance(payload, dict) else None
+    if not isinstance(chunk, dict):
+        return None
+    thread_id = chunk.get("thread_id")
+    return thread_id.strip() if isinstance(thread_id, str) and thread_id.strip() else None
+
+
 async def get_redis_client():
     global _redis_client
     if _redis_client is not None:
@@ -164,14 +190,14 @@ async def append_run_stream_event(run_id: str, event_type: str, payload: dict, *
     key = _event_stream_key(run_id)
     now = datetime.now(tz=UTC)
     now_ms = int(now.timestamp() * 1000)
-    envelope = {
-        "schema_version": 1,
-        "run_id": run_id,
-        "thread_id": thread_id,
-        "event": event_type,
-        "payload": payload or {},
-        "created_at": now.isoformat(),
-    }
+    event_thread_id = thread_id or _payload_thread_id(payload)
+    envelope = build_run_event_envelope(
+        run_id=run_id,
+        event_type=event_type,
+        payload=payload or {},
+        thread_id=event_thread_id,
+        created_at=now.isoformat(),
+    )
     fields = {
         "event_type": event_type,
         "payload": json.dumps(envelope, ensure_ascii=False),

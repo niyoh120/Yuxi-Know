@@ -109,6 +109,12 @@ const run = () => {
   assert.equal(conversations[0].messages.at(-1).isLast, true)
   assert.equal(conversations[0].status, 'finished')
 
+  const assistantBody = MessageProcessor.parseAssistantMessageBody({
+    type: 'ai',
+    content: '<think>推理过程</think>最终答案'
+  })
+  assert.deepEqual(assistantBody, { content: '最终答案', reasoningContent: '推理过程' })
+
   console.log('messageProcessor extractKnowledgeChunksFromConversation: all assertions passed')
 }
 

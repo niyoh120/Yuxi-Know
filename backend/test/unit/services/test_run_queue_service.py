@@ -97,7 +97,11 @@ async def test_run_stream_event_roundtrip(monkeypatch: pytest.MonkeyPatch):
 
     run_id = "run-1"
     seq1 = await run_queue_service.append_run_stream_event(run_id, "loading", {"items": [1]})
-    seq2 = await run_queue_service.append_run_stream_event(run_id, "finished", {"chunk": {"status": "finished"}})
+    seq2 = await run_queue_service.append_run_stream_event(
+        run_id,
+        "finished",
+        {"chunk": {"status": "finished", "thread_id": "child-thread"}},
+    )
 
     assert seq1 < seq2
 
@@ -106,6 +110,7 @@ async def test_run_stream_event_roundtrip(monkeypatch: pytest.MonkeyPatch):
     assert events[0]["payload"]["schema_version"] == 1
     assert events[0]["payload"]["run_id"] == run_id
     assert events[0]["payload"]["payload"] == {"items": [1]}
+    assert events[1]["payload"]["thread_id"] == "child-thread"
 
     next_events = await run_queue_service.list_run_stream_events(run_id, after_seq=seq1, limit=100)
     assert len(next_events) == 1

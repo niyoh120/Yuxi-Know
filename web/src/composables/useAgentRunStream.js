@@ -55,9 +55,9 @@ const getThreadIdFromObject = (value) => {
 
 const resolveChunkThreadId = ({ envelope, payload, chunk, fallbackThreadId }) => {
   return (
-    getThreadIdFromObject(chunk) ||
-    getThreadIdFromObject(payload) ||
     getThreadIdFromObject(envelope) ||
+    getThreadIdFromObject(payload) ||
+    getThreadIdFromObject(chunk) ||
     fallbackThreadId
   )
 }

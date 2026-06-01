@@ -148,6 +148,7 @@ import { storeToRefs } from 'pinia'
 import { MessageProcessor } from '@/utils/messageProcessor'
 import { normalizeAttachmentPreviews } from '@/utils/file_utils'
 import { buildMentionDisplayLabels } from '@/utils/mention_utils'
+import { normalizeToolCalls } from '@/components/ToolCallingResult/toolRegistry'
 
 const props = defineProps({
   // 消息角色：'user'|'assistant'|'sent'|'received'
@@ -281,50 +282,13 @@ const messageSources = computed(() => {
   return { knowledgeChunks: [], webSources: [] }
 })
 
-// 过滤有效的工具调用
-const validToolCalls = computed(() => {
-  if (!props.message.tool_calls || !Array.isArray(props.message.tool_calls)) {
-    return []
-  }
-
-  return props.message.tool_calls.filter((toolCall) => {
-    // 过滤掉无效的工具调用
-    return (
-      toolCall &&
-      (toolCall.id || toolCall.name || toolCall.function?.name) &&
-      (toolCall.args !== undefined ||
-        toolCall.function?.arguments !== undefined ||
-        toolCall.tool_call_result !== undefined)
-    )
-  })
-})
+const validToolCalls = computed(() => normalizeToolCalls(props.message.tool_calls))
 
 const parsedData = computed(() => {
-  // Start with default values from the prop to avoid mutation.
-  let content = props.message.content.trim() || ''
-  let reasoning_content = props.message.additional_kwargs?.reasoning_content || ''
-
-  if (reasoning_content) {
-    return {
-      content,
-      reasoning_content
-    }
-  }
-
-  // Regex to find <think>...</think> or an unclosed <think>... at the end of the string.
-  const thinkRegex = /<think>(.*?)<\/think>|<think>(.*?)$/s
-  const thinkMatch = content.match(thinkRegex)
-
-  if (thinkMatch) {
-    // The captured reasoning is in either group 1 (closed tag) or 2 (unclosed tag).
-    reasoning_content = (thinkMatch[1] || thinkMatch[2] || '').trim()
-    // Remove the entire matched <think> block from the original content.
-    content = content.replace(thinkMatch[0], '').trim()
-  }
-
+  const { content, reasoningContent } = MessageProcessor.parseAssistantMessageBody(props.message)
   return {
     content,
-    reasoning_content
+    reasoning_content: reasoningContent
   }
 })
 </script>

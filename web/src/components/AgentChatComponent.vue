@@ -45,10 +45,7 @@
           <div class="chat-box">
             <template v-for="row in conversationRows" :key="row.key">
               <div v-if="row.type === 'conversation'" class="conv-box">
-                <template
-                  v-for="(displayItem, itemIndex) in getConversationDisplayItems(row.conv)"
-                  :key="displayItem.key"
-                >
+                <template v-for="(displayItem, itemIndex) in row.displayItems" :key="displayItem.key">
                   <AgentMessageComponent
                     v-if="displayItem.type === 'message'"
                     :message="displayItem.message"
@@ -62,9 +59,7 @@
                   <ToolCallsGroupComponent
                     v-else
                     :tool-calls="displayItem.toolCalls"
-                    :is-active="
-                      isToolGroupActive(row.conv, itemIndex, getConversationDisplayItems(row.conv))
-                    "
+                    :is-active="isToolGroupActive(row.conv, itemIndex, row.displayItems)"
                   />
                 </template>
                 <AgentArtifactsCard
@@ -366,6 +361,7 @@ import { useAgentMentionConfig } from '@/composables/useAgentMentionConfig'
 import AgentArtifactsCard from '@/components/AgentArtifactsCard.vue'
 import AgentPanel from '@/components/AgentPanel.vue'
 import AttachmentTmpUploadModal from '@/components/AttachmentTmpUploadModal.vue'
+import { normalizeToolCalls } from '@/components/ToolCallingResult/toolRegistry'
 
 // ==================== PROPS & EMITS ====================
 const props = defineProps({
@@ -821,7 +817,8 @@ const conversationRows = computed(() => {
   const rows = conversations.value.map((conv, index) => ({
     type: 'conversation',
     key: conv.status === 'streaming' ? 'ongoing-conversation' : `history-${index}`,
-    conv
+    conv,
+    displayItems: getConversationDisplayItems(conv)
   }))
 
   if (currentThreadConfigNotice.value) {
@@ -1769,27 +1766,10 @@ const handleResizingChange = (isResizingState, clientX = 0) => {
 }
 
 // ==================== HELPER FUNCTIONS ====================
-const extractAssistantMessageBody = (message) => {
-  let content = typeof message?.content === 'string' ? message.content.trim() : ''
-  let reasoningContent = message?.additional_kwargs?.reasoning_content || ''
-
-  if (!reasoningContent && content) {
-    const thinkRegex = /<think>(.*?)<\/think>|<think>(.*?)$/s
-    const thinkMatch = content.match(thinkRegex)
-
-    if (thinkMatch) {
-      reasoningContent = (thinkMatch[1] || thinkMatch[2] || '').trim()
-      content = content.replace(thinkMatch[0], '').trim()
-    }
-  }
-
-  return { content, reasoningContent }
-}
-
 const hasVisibleAssistantBody = (message) => {
   if (!message || message.type !== 'ai') return true
 
-  const { content, reasoningContent } = extractAssistantMessageBody(message)
+  const { content, reasoningContent } = MessageProcessor.parseAssistantMessageBody(message)
   return Boolean(
     content ||
     reasoningContent ||
@@ -1800,19 +1780,8 @@ const hasVisibleAssistantBody = (message) => {
 }
 
 const getMessageToolCalls = (message) => {
-  if (!Array.isArray(message?.tool_calls)) return []
-
-  return message.tool_calls
-    .filter((toolCall) => {
-      return (
-        toolCall &&
-        (toolCall.id || toolCall.name || toolCall.function?.name) &&
-        (toolCall.args !== undefined ||
-          toolCall.function?.arguments !== undefined ||
-          toolCall.tool_call_result !== undefined)
-      )
-    })
-    .map((toolCall) => {
+  return normalizeToolCalls(message?.tool_calls, {
+    mapToolCall: (toolCall) => {
       const subagentRun = toolCall.id ? currentSubagentRunById.value.get(String(toolCall.id)) : null
       if (!subagentRun) return toolCall
 
@@ -1821,7 +1790,8 @@ const getMessageToolCalls = (message) => {
         subagent_run: subagentRun,
         display_label: subagentRun.subagent_name || subagentRun.subagent_type || undefined
       }
-    })
+    }
+  })
 }
 
 // 将 AI 消息拆成“正文块”和“工具块”，再跨消息合并相邻工具块。

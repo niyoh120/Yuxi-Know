@@ -53,4 +53,27 @@ export const HIDDEN_TOOL_CALL_IDS = ['present_artifacts']
 
 export const getToolCallId = (toolCall) => toolCall?.name || toolCall?.function?.name || ''
 
+export const isHiddenToolCall = (toolCall) => HIDDEN_TOOL_CALL_IDS.includes(getToolCallId(toolCall))
+
+export const isValidToolCall = (toolCall) => {
+  return Boolean(
+    toolCall &&
+      (toolCall.id || toolCall.name || toolCall.function?.name) &&
+      (toolCall.args !== undefined ||
+        toolCall.function?.arguments !== undefined ||
+        toolCall.tool_call_result !== undefined)
+  )
+}
+
+export const normalizeToolCalls = (toolCalls, { includeHidden = false, mapToolCall } = {}) => {
+  if (!Array.isArray(toolCalls)) return []
+
+  return toolCalls
+    .filter((toolCall) => {
+      if (!isValidToolCall(toolCall)) return false
+      return includeHidden || !isHiddenToolCall(toolCall)
+    })
+    .map((toolCall) => (mapToolCall ? mapToolCall(toolCall) : toolCall))
+}
+
 export const getToolIcon = (toolId) => TOOL_ICON_MAP[toolId] || null

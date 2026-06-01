@@ -42,7 +42,7 @@
 import { computed, ref, watch } from 'vue'
 import { ChevronDown, ChevronRight, Wrench } from 'lucide-vue-next'
 import { ToolCallRenderer } from '@/components/ToolCallingResult'
-import { getToolCallId, HIDDEN_TOOL_CALL_IDS } from '@/components/ToolCallingResult/toolRegistry'
+import { getToolCallId, normalizeToolCalls } from '@/components/ToolCallingResult/toolRegistry'
 
 const props = defineProps({
   toolCalls: {
@@ -55,20 +55,7 @@ const props = defineProps({
   }
 })
 
-const normalizedToolCalls = computed(() => {
-  return (props.toolCalls || []).filter((toolCall) => {
-    const toolId = getToolCallId(toolCall)
-
-    return (
-      toolCall &&
-      !HIDDEN_TOOL_CALL_IDS.includes(toolId) &&
-      (toolCall.id || toolCall.name || toolCall.function?.name) &&
-      (toolCall.args !== undefined ||
-        toolCall.function?.arguments !== undefined ||
-        toolCall.tool_call_result !== undefined)
-    )
-  })
-})
+const normalizedToolCalls = computed(() => normalizeToolCalls(props.toolCalls))
 
 const shouldCollapseToolCalls = computed(() => normalizedToolCalls.value.length > 0)
 const areToolCallsExpanded = ref(false)

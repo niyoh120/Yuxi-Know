@@ -17,6 +17,7 @@ from yuxi.repositories.agent_repository import AgentRepository
 from yuxi.repositories.agent_run_repository import TERMINAL_RUN_STATUSES, AgentRunRepository
 from yuxi.repositories.conversation_repository import ConversationRepository
 from yuxi.services.run_queue_service import (
+    build_run_event_envelope,
     get_arq_pool,
     get_last_run_stream_seq,
     list_run_stream_events,
@@ -273,14 +274,13 @@ async def stream_agent_run_events(
                 if terminal_seq in {"", "0-0"}:
                     terminal_seq = None
                 yield _format_sse(
-                    {
-                        "schema_version": 1,
-                        "run_id": run_id,
-                        "thread_id": run.thread_id,
-                        "event": "end",
-                        "payload": {"status": run.status},
-                        "created_at": utc_now_naive().isoformat(),
-                    },
+                    build_run_event_envelope(
+                        run_id=run_id,
+                        thread_id=run.thread_id,
+                        event_type="end",
+                        payload={"status": run.status},
+                        created_at=utc_now_naive().isoformat(),
+                    ),
                     event="end",
                     event_id=terminal_seq,
                 )

@@ -41,7 +41,7 @@ import MysqlDescribeTableTool from './tools/MysqlDescribeTableTool.vue'
 import MysqlListTablesTool from './tools/MysqlListTablesTool.vue'
 import AskUserQuestionTool from './tools/AskUserQuestionTool.vue'
 import ExecuteTool from './tools/ExecuteTool.vue'
-import { getToolCallId, HIDDEN_TOOL_CALL_IDS } from './toolRegistry'
+import { getToolCallId, isHiddenToolCall } from './toolRegistry'
 
 const props = defineProps({
   toolCall: {
@@ -91,7 +91,7 @@ const TOOL_RENDERERS = {
 }
 
 const currentRenderer = computed(() => TOOL_RENDERERS[toolId.value] || null)
-const isHidden = computed(() => HIDDEN_TOOL_CALL_IDS.includes(toolId.value))
+const isHidden = computed(() => isHiddenToolCall(props.toolCall))
 
 const toolRendererRef = ref(null)
 const refreshGraph = () => {

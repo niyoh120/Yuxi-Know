@@ -284,6 +284,28 @@ export class MessageProcessor {
   }
 
   /**
+   * 解析助手消息正文与推理内容，保持渲染和列表拆分使用同一套规则。
+   * @param {Object} message - AI 消息对象
+   * @returns {{content: string, reasoningContent: string}}
+   */
+  static parseAssistantMessageBody(message) {
+    let content = typeof message?.content === 'string' ? message.content.trim() : ''
+    let reasoningContent = message?.additional_kwargs?.reasoning_content || ''
+
+    if (!reasoningContent && content) {
+      const thinkRegex = /<think>(.*?)<\/think>|<think>(.*?)$/s
+      const thinkMatch = content.match(thinkRegex)
+
+      if (thinkMatch) {
+        reasoningContent = (thinkMatch[1] || thinkMatch[2] || '').trim()
+        content = content.replace(thinkMatch[0], '').trim()
+      }
+    }
+
+    return { content, reasoningContent }
+  }
+
+  /**
    * 合并消息块
    * @param {Array} chunks - 消息块数组
    * @returns {Object|null} 合并后的消息
@@ -398,96 +420,6 @@ export class MessageProcessor {
     }
   }
 
-  /**
-   * 处理流式响应数据块
-   * @param {Object} data - 响应数据
-   * @param {Object} onGoingConv - 进行中的对话对象
-   * @param {Object} state - 状态对象
-   * @param {Function} getAgentHistory - 获取历史记录函数
-   * @param {Function} handleError - 错误处理函数
-   */
-  static async processResponseChunk(data, onGoingConv, state, getAgentHistory, handleError) {
-    try {
-      switch (data.status) {
-        case 'init':
-          // 代表服务端收到请求并返回第一个响应
-          state.waitingServerResponse = false
-          onGoingConv.msgChunks[data.request_id] = [data.msg]
-          break
-
-        case 'loading':
-          if (data.msg.id) {
-            if (!onGoingConv.msgChunks[data.msg.id]) {
-              onGoingConv.msgChunks[data.msg.id] = []
-            }
-            onGoingConv.msgChunks[data.msg.id].push(data.msg)
-          }
-          break
-
-        case 'error':
-          console.error('流式处理出错:', data.message)
-          handleError(new Error(data.message), 'stream')
-          break
-
-        case 'finished':
-          await getAgentHistory()
-          break
-
-        default:
-          console.warn('未知的响应状态:', data.status)
-      }
-    } catch (error) {
-      handleError(error, 'stream')
-    }
-  }
-
-  /**
-   * 处理流式响应
-   * @param {Response} response - 响应对象
-   * @param {Function} processChunk - 处理块的函数
-   * @param {Function} scrollToBottom - 滚动到底部函数
-   * @param {Function} handleError - 错误处理函数
-   */
-  static async handleStreamResponse(response, processChunk, scrollToBottom, handleError) {
-    try {
-      const reader = response.body.getReader()
-      let buffer = ''
-      const decoder = new TextDecoder()
-
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-
-        buffer += decoder.decode(value, { stream: true })
-        const lines = buffer.split('\n')
-        buffer = lines.pop() || '' // 保留最后一行可能不完整的内容
-
-        for (const line of lines) {
-          if (line.trim()) {
-            try {
-              const data = JSON.parse(line.trim())
-              await processChunk(data)
-            } catch (e) {
-              console.debug('解析JSON出错:', e.message)
-            }
-          }
-        }
-        await scrollToBottom()
-      }
-
-      // 处理缓冲区中可能剩余的内容
-      if (buffer.trim()) {
-        try {
-          const data = JSON.parse(buffer.trim())
-          await processChunk(data)
-        } catch {
-          console.warn('最终缓冲区内容无法解析:', buffer)
-        }
-      }
-    } catch (error) {
-      handleError(error, 'stream')
-    }
-  }
 }
 
 export default MessageProcessor
