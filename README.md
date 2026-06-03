@@ -1,5 +1,7 @@
 <div align="center">
-<h1>语析 - 结合知识库与知识图谱的多租户 Harness 平台</h1>
+<h1>语析 Yuxi</h1>
+
+<p><strong>融合 RAG 与知识图谱的多租户智能体平台</strong><br/>让企业知识可被智能体检索、推理与交付</p>
 
 [![](https://img.shields.io/badge/Docker-2496ED?style=flat&logo=docker&logoColor=ffffff)](https://github.com/xerrors/Yuxi/blob/main/docker-compose.yml)
 [![](https://img.shields.io/github/issues/xerrors/Yuxi?color=F48D73)](https://github.com/xerrors/Yuxi/issues)
@@ -20,15 +22,45 @@
 
 **图由 GPT-Image-2 生成*
 
+## 简介
+
+语析（Yuxi）是一个基于大模型的智能知识库与知识图谱智能体开发平台。它把 **RAG 检索**、**LightRAG 知识图谱** 与 **LangGraph 多智能体编排** 整合进统一的多租户工作台：管理员配置知识库、模型与权限，用户在类 ChatGPT 的界面中与可挂载 Skills、MCP、子智能体和沙盒工具的智能体对话，并获得带引用来源、知识图谱推理与可交付产物的回答。
+
 ## 核心特性
 
-- **智能体开发**：基于 LangGraph，支持子智能体、Skills、MCPs、Tools 与中间件机制
-- **知识库（RAG）**：多格式文档解析，支持 Embedding / Rerank 配置及知识库评估
-- **知识图谱**：基于 LightRAG 的图谱构建与可视化，支持属性图谱并参与智能体推理
-- **平台与工程化**：Vue + FastAPI 架构，支持暗黑模式、Docker 与生产级部署
+- 🤖 **智能体开发** —— 基于 LangGraph 构建，支持子智能体（SubAgents）、Skills、MCP、Tools 与中间件机制；长耗时任务由后台 worker 异步执行，配套沙盒文件系统支持工具产物落盘、预览与下载。
+- 📚 **知识库（RAG）** —— 多格式文档解析（MinerU / PaddleX / OCR），可配置 Embedding 与 Rerank 模型，支持知识库评估与 PDF / 图片在线预览，检索来源回填到对话引用。
+- 🕸️ **知识图谱** —— 基于 LightRAG 的图谱构建与可视化，支持属性图谱，并作为检索增强直接参与智能体推理。
+- 🏢 **多租户与权限** —— 用户 / 部门级权限管理，模型供应商统一配置，支持 API Key 认证供外部系统集成调用。
+- ⚙️ **平台与工程化** —— Vue + FastAPI 架构，开箱即用的 Docker Compose 部署，支持暗黑模式、LITE 轻量启动与生产级编排。
+
+## 技术栈
+
+| 层 | 技术 |
+| --- | --- |
+| 前端 | Vue 3 · Vite · Pinia |
+| 后端 | FastAPI · LangGraph · ARQ (异步 worker) |
+| 存储 | PostgreSQL · Redis · MinIO · Milvus · Neo4j |
+| 文档解析 | MinerU · PaddleX · RapidOCR |
+| 部署 | Docker Compose |
 
 ## 最新动态
 
+
+<details open>
+<summary>[2026/06] v0.7.0 开发中（重要不兼容变更）</summary>
+
+### 重大变更
+
+- **模型配置收敛**：移除旧版 v1 模型配置与 Ollama 支持，运行时统一使用 `provider_id:model_id` 与独立 provider 模块，自定义 provider 迁移到数据库
+- **智能体运行时收敛**：用户可见的 `AgentConfig` 收敛为数据库持久化的一级 `Agent`，新增 `/api/agent` 管理与运行接口，前端只提交 `agent_id`
+- **知识库能力收敛**：移除 Upload 与 LightRAG 知识库/图谱能力，知识库类型收敛为 **Milvus** 与只读连接器（**Dify**、**Notion**）；知识图谱仅保留 Milvus 知识库内的构建/展示/检索
+- **Skill 安装与权限收敛**：以 `source_type / share_config / enabled` 表达来源、生效范围与启用状态；内置 Skill 启动自动入库并默认全局启用，上传/远程统一改为「解析草稿 → 确认安装」
+- **用户身份命名收敛**：业务登录标识统一为字符串 `uid`
+
+详见 [开发路线图](docs/develop-guides/roadmap.md)。
+
+</details>
 
 <details>
 <summary>[2026/04/01] v0.6.0 版本发布</summary>
@@ -87,10 +119,12 @@
 
 ## 快速开始
 
-克隆代码，并初始化
+**前置要求**：已安装 [Docker](https://docs.docker.com/get-docker/) 与 Docker Compose，并准备至少一个兼容 OpenAI 接口的大模型 API。
 
-```
-git clone --branch v0.6.2 --depth 1 https://github.com/xerrors/Yuxi.git
+**1. 克隆代码并初始化**
+
+```bash
+git clone --branch v0.7.0.dev0 --depth 1 https://github.com/xerrors/Yuxi.git
 cd Yuxi
 
 # Linux/macOS
@@ -100,13 +134,17 @@ cd Yuxi
 .\scripts\init.ps1
 ```
 
-然后需要使用 docker 启动项目
+**2. 使用 Docker 启动**
 
-```
+```bash
 docker compose up --build
 ```
 
-等待启动完成后，访问 `http://localhost:5173`
+**3. 访问平台**
+
+等待启动完成后，浏览器打开 `http://localhost:5173`，使用初始化时生成的管理员账户登录即可。
+
+> 💡 不需要知识库 / 知识图谱等重依赖时，可使用 `make up-lite` 以 LITE 轻量模式启动，加快冷启动速度。更多部署说明见 [项目文档](https://xerrors.github.io/Yuxi)。
 
 ## 示例与演示
 

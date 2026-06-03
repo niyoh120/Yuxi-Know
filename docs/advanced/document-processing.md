@@ -119,3 +119,4 @@ HOST_IP=your_server_ip
 2. **GPU 要求**：MinerU 和 PP-Structure-V3 需要 GPU 支持
 3. **API 密钥**：部分服务需要额外的 API 密钥配置
 4. **超时处理**：复杂文档解析可能耗时较长，可通过 `MINERU_TIMEOUT` 环境变量调整超时时间
+5. **文件大小限制**：单个上传文件大小不超过 100 MB

@@ -62,14 +62,16 @@ Qwen-Image 生成能力已迁移为内置 Skill `image-gen`。模型调用与图
 from yuxi.agents.toolkits.kbs import get_common_kb_tools
 
 kb_tools = get_common_kb_tools()
-# 返回: [list_kbs, get_mindmap, query_kb]
+# 返回: [list_kbs, get_mindmap, query_kb, find_kb_document, open_kb_document]
 ```
 
 | 工具 | 说明 |
 |------|------|
 | `list_kbs` | 列出用户可访问的知识库 |
 | `get_mindmap` | 获取知识库的思维导图结构 |
-| `query_kb` | 在指定知识库中检索内容 |
+| `query_kb` | 在指定知识库中检索内容，返回结构化的 `resource_id`（即 `kb_id`）/`file_id`/`chunk` |
+| `find_kb_document` | 在已知文件内按关键词或正则定位内容 |
+| `open_kb_document` | 按 `file_id` 分段打开知识库文档（默认窗口 1800 行） |
 
 ## 工具组装
 
@@ -99,6 +101,6 @@ async def get_tools_from_context(self, context) -> list:
 
 ## Skills 集成
 
-Skills 与工具是两种不同的扩展机制。工具是具体的功能实现，而 Skills 是包含提示词、工具依赖和元数据的完整技能包。通过 `context.skills` 配置 Skills 时，对应的技能文件会被挂载到 `/skills/<slug>/...`，智能体可以通过读取 SKILL.md 来了解如何使用这些技能。
+Skills 与工具是两种不同的扩展机制。工具是具体的功能实现，而 Skills 是包含提示词、工具依赖和元数据的完整技能包。通过 `context.skills` 配置 Skills 时，对应的技能文件会被挂载到沙盒的 `/home/gem/skills/<slug>/...`，智能体可以通过读取 SKILL.md 来了解如何使用这些技能。
 
 关于 Skills 的详细机制，请参阅 [Skills 管理](./skills-management.md)。

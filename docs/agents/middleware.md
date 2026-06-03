@@ -41,4 +41,4 @@ async def get_graph(self):
 
 ## 自定义中间件
 
-新增中间件时，将其放入 `backend/package/yuxi/agents/common/middlewares` 目录，然后在智能体的 `middleware` 列表中引用即可。
+新增中间件时，将其放入 `backend/package/yuxi/agents/middlewares` 目录，然后在智能体的 `middleware` 列表中引用即可。该目录下已内置知识库挂载（`knowledge_base`）、Skills 注入（`skills`）、附件上下文（`attachment`）、子智能体任务（`subagent_task`）、上下文压缩（`summary`）、动态工具（`dynamic_tool`）等中间件。
