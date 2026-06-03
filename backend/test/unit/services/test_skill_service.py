@@ -74,8 +74,14 @@ async def test_list_visible_skills_for_management_includes_owned_disabled_and_en
 @pytest.mark.parametrize(
     "skill,operator",
     [
-        (Skill(slug="owned-disabled", name="owned-disabled", description="", created_by="root", enabled=False), _user("root", role="user")),
-        (Skill(slug="admin-disabled", name="admin-disabled", description="", created_by="other", enabled=False), _user("root", role="admin")),
+        (
+            Skill(slug="owned-disabled", name="owned-disabled", description="", created_by="root", enabled=False),
+            _user("root", role="user"),
+        ),
+        (
+            Skill(slug="admin-disabled", name="admin-disabled", description="", created_by="other", enabled=False),
+            _user("root", role="admin"),
+        ),
         (
             Skill(
                 slug="shared-enabled",
@@ -233,10 +239,30 @@ async def test_normal_user_confirm_skill_draft_rejects_wider_share_scope(
 
 def test_parse_skill_markdown_ok():
     content = "---\nname: demo-skill\ndescription: demo description\n---\n# Demo\n"
-    name, desc, meta = svc._parse_skill_markdown(content)
+    slug, name, desc, meta = svc._parse_skill_markdown(content)
+    assert slug == "demo-skill"
     assert name == "demo-skill"
     assert desc == "demo description"
     assert meta["name"] == "demo-skill"
+
+
+def test_parse_skill_markdown_supports_display_name_with_slug():
+    content = (
+        "---\n"
+        "name: Word / DOCX\n"
+        "slug: word-docx\n"
+        "version: 1.0.2\n"
+        "homepage: https://clawic.com/skills/word-docx\n"
+        "description: Create, inspect, and edit Microsoft Word documents.\n"
+        'metadata: {"clawdbot":{"emoji":"📘","os":["linux","darwin","win32"]}}\n'
+        "---\n"
+        "# Word / DOCX\n"
+    )
+    slug, name, desc, meta = svc._parse_skill_markdown(content)
+    assert slug == "word-docx"
+    assert name == "Word / DOCX"
+    assert desc == "Create, inspect, and edit Microsoft Word documents."
+    assert meta["version"] == "1.0.2"
 
 
 def test_parse_skill_markdown_requires_frontmatter():
@@ -383,6 +409,211 @@ async def test_skill_upload_prepare_confirm_rewrites_conflicting_name(tmp_path: 
     assert FakeRepo.created_item.slug == "demo-v2"
     skill_md = (tmp_path / "skills" / "demo-v2" / "SKILL.md").read_text(encoding="utf-8")
     assert "name: demo-v2" in skill_md
+
+
+@pytest.mark.asyncio
+async def test_skill_zip_import_uses_skill_md_name_not_zip_or_root_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setattr(svc.sys_config, "save_dir", str(tmp_path))
+
+    class FakeRepo:
+        created_item: Skill | None = None
+
+        def __init__(self, _db):
+            pass
+
+        async def exists_slug(self, _slug: str) -> bool:
+            return False
+
+        async def create(self, **kwargs) -> Skill:
+            item = Skill(**kwargs, updated_by=kwargs["created_by"])
+            self.__class__.created_item = item
+            return item
+
+    monkeypatch.setattr(svc, "SkillRepository", FakeRepo)
+
+    zip_bytes = _build_zip(
+        {
+            "Bad--Archive-Name/SKILL.md": (
+                "---\nname: valid-skill\ndescription: this is valid\n---\n# Valid\n"
+            ),
+            "Bad--Archive-Name/prompts/system.md": "Use valid skill metadata.",
+        }
+    )
+    operator = _user("root")
+
+    draft = await svc.prepare_skill_upload(
+        None,
+        filename="Bad--Archive-Name.zip",
+        file_bytes=zip_bytes,
+        operator=operator,
+    )
+    results = await svc.confirm_skill_install_draft(
+        None,
+        draft_id=draft["draft_id"],
+        share_config=draft["default_share_config"],
+        operator=operator,
+    )
+
+    assert draft["items"][0]["original_name"] == "valid-skill"
+    assert draft["items"][0]["slug"] == "valid-skill"
+    assert results[0]["success"] is True
+    assert results[0]["slug"] == "valid-skill"
+    assert FakeRepo.created_item.slug == "valid-skill"
+    assert (tmp_path / "skills" / "valid-skill" / "SKILL.md").exists()
+
+
+@pytest.mark.asyncio
+async def test_skill_zip_import_validates_skill_md_name_not_zip_filename(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setattr(svc.sys_config, "save_dir", str(tmp_path))
+
+    class FakeRepo:
+        def __init__(self, _db):
+            pass
+
+        async def exists_slug(self, _slug: str) -> bool:
+            return False
+
+    monkeypatch.setattr(svc, "SkillRepository", FakeRepo)
+
+    zip_bytes = _build_zip(
+        {
+            "valid-archive/SKILL.md": (
+                "---\nname: invalid--skill\ndescription: invalid name\n---\n# Invalid\n"
+            ),
+        }
+    )
+
+    with pytest.raises(ValueError, match="SKILL.md frontmatter.name 必须是小写字母/数字/短横线"):
+        await svc.prepare_skill_upload(
+            None,
+            filename="valid-archive.zip",
+            file_bytes=zip_bytes,
+            operator=_user("root"),
+        )
+
+
+@pytest.mark.asyncio
+async def test_skill_zip_import_uses_frontmatter_slug_and_keeps_display_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setattr(svc.sys_config, "save_dir", str(tmp_path))
+
+    class FakeRepo:
+        created_item: Skill | None = None
+
+        def __init__(self, _db):
+            pass
+
+        async def exists_slug(self, _slug: str) -> bool:
+            return False
+
+        async def create(self, **kwargs) -> Skill:
+            item = Skill(**kwargs, updated_by=kwargs["created_by"])
+            self.__class__.created_item = item
+            return item
+
+    monkeypatch.setattr(svc, "SkillRepository", FakeRepo)
+
+    zip_bytes = _build_zip(
+        {
+            "Word Skill/SKILL.md": (
+                "---\n"
+                "name: Word / DOCX\n"
+                "slug: word-docx\n"
+                "version: 1.0.2\n"
+                "homepage: https://clawic.com/skills/word-docx\n"
+                "description: Create, inspect, and edit Microsoft Word documents.\n"
+                "changelog: Tightened review workflows.\n"
+                'metadata: {"clawdbot":{"emoji":"📘","os":["linux","darwin","win32"]}}\n'
+                "---\n"
+                "# Word / DOCX\n"
+            )
+        }
+    )
+    operator = _user("root")
+
+    draft = await svc.prepare_skill_upload(
+        None,
+        filename="Word Skill.zip",
+        file_bytes=zip_bytes,
+        operator=operator,
+    )
+    results = await svc.confirm_skill_install_draft(
+        None,
+        draft_id=draft["draft_id"],
+        share_config=draft["default_share_config"],
+        operator=operator,
+    )
+
+    assert draft["items"][0]["slug"] == "word-docx"
+    assert draft["items"][0]["name"] == "Word / DOCX"
+    assert results[0]["success"] is True
+    assert results[0]["slug"] == "word-docx"
+    assert FakeRepo.created_item.slug == "word-docx"
+    assert FakeRepo.created_item.name == "Word / DOCX"
+
+
+@pytest.mark.asyncio
+async def test_skill_zip_import_rewrites_conflicting_slug_not_display_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setattr(svc.sys_config, "save_dir", str(tmp_path))
+
+    class FakeRepo:
+        existing_slugs = {"word-docx"}
+        created_item: Skill | None = None
+
+        def __init__(self, _db):
+            pass
+
+        async def exists_slug(self, slug: str) -> bool:
+            return slug in self.__class__.existing_slugs
+
+        async def create(self, **kwargs) -> Skill:
+            item = Skill(**kwargs, updated_by=kwargs["created_by"])
+            self.__class__.existing_slugs.add(item.slug)
+            self.__class__.created_item = item
+            return item
+
+    monkeypatch.setattr(svc, "SkillRepository", FakeRepo)
+
+    zip_bytes = _build_zip(
+        {
+            "Word Skill/SKILL.md": (
+                "---\n"
+                "name: Word / DOCX\n"
+                "slug: word-docx\n"
+                "description: Create, inspect, and edit Microsoft Word documents.\n"
+                "---\n"
+                "# Word / DOCX\n"
+            )
+        }
+    )
+    operator = _user("root")
+
+    draft = await svc.prepare_skill_upload(
+        None,
+        filename="Word Skill.zip",
+        file_bytes=zip_bytes,
+        operator=operator,
+    )
+    results = await svc.confirm_skill_install_draft(
+        None,
+        draft_id=draft["draft_id"],
+        share_config=draft["default_share_config"],
+        operator=operator,
+    )
+
+    assert results[0]["slug"] == "word-docx-v2"
+    assert results[0]["success"] is True
+    assert FakeRepo.created_item.name == "Word / DOCX"
+    skill_md = (tmp_path / "skills" / "word-docx-v2" / "SKILL.md").read_text(encoding="utf-8")
+    assert "name: Word / DOCX" in skill_md
+    assert "slug: word-docx-v2" in skill_md
 
 
 @pytest.mark.asyncio

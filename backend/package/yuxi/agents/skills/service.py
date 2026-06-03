@@ -531,14 +531,23 @@ async def update_skill_dependencies(
     )
 
 
-def _validate_skill_name(name: str) -> str:
+def _validate_skill_slug_value(slug: str, *, field_name: str) -> str:
+    slug = slug.strip()
+    if not slug:
+        raise ValueError(f"SKILL.md frontmatter 缺少 {field_name}")
+    if len(slug) > 128:
+        raise ValueError(f"SKILL.md frontmatter.{field_name} 长度不能超过 128")
+    if not SKILL_NAME_PATTERN.match(slug):
+        raise ValueError(f"SKILL.md frontmatter.{field_name} 必须是小写字母/数字/短横线，且不能连续短横线")
+    return slug
+
+
+def _validate_skill_display_name(name: str) -> str:
     name = name.strip()
     if not name:
         raise ValueError("SKILL.md frontmatter 缺少 name")
     if len(name) > 128:
-        raise ValueError("skill name 长度不能超过 128")
-    if not SKILL_NAME_PATTERN.match(name):
-        raise ValueError("skill name 必须是小写字母/数字/短横线，且不能连续短横线")
+        raise ValueError("SKILL.md frontmatter.name 长度不能超过 128")
     return name
 
 
@@ -565,7 +574,7 @@ def _split_frontmatter(content: str) -> tuple[str, str]:
     return frontmatter_raw, body
 
 
-def _parse_skill_markdown(content: str) -> tuple[str, str, dict[str, Any]]:
+def _parse_skill_markdown(content: str) -> tuple[str, str, str, dict[str, Any]]:
     frontmatter_raw, _body = _split_frontmatter(content)
     try:
         data = yaml.safe_load(frontmatter_raw)
@@ -575,20 +584,27 @@ def _parse_skill_markdown(content: str) -> tuple[str, str, dict[str, Any]]:
     if not isinstance(data, dict):
         raise ValueError("SKILL.md frontmatter 必须是对象")
 
-    name = _validate_skill_name(str(data.get("name", "")))
+    name = _validate_skill_display_name(str(data.get("name", "")))
+    raw_slug = str(data.get("slug", "")).strip()
+    slug = _validate_skill_slug_value(raw_slug, field_name="slug") if raw_slug else _validate_skill_slug_value(
+        name, field_name="name"
+    )
     description = str(data.get("description", "")).strip()
     if not description:
         raise ValueError("SKILL.md frontmatter 缺少 description")
 
-    return name, description, data
+    return slug, name, description, data
 
 
-def _rewrite_frontmatter_name(content: str, new_name: str) -> str:
+def _rewrite_frontmatter_slug(content: str, new_slug: str) -> str:
     frontmatter_raw, body = _split_frontmatter(content)
     data = yaml.safe_load(frontmatter_raw)
     if not isinstance(data, dict):
         raise ValueError("SKILL.md frontmatter 必须是对象")
-    data["name"] = new_name
+    if data.get("slug"):
+        data["slug"] = new_slug
+    else:
+        data["name"] = new_slug
     dumped = yaml.safe_dump(data, sort_keys=False, allow_unicode=True).strip()
     return f"---\n{dumped}\n---\n{body}"
 
@@ -621,8 +637,9 @@ def _parse_skill_dir_metadata(source_skill_dir: Path) -> dict[str, Any]:
         raise ValueError("技能目录缺少根级 SKILL.md")
 
     content = skill_md_path.read_text(encoding="utf-8")
-    parsed_name, parsed_desc, meta = _parse_skill_markdown(content)
+    parsed_slug, parsed_name, parsed_desc, meta = _parse_skill_markdown(content)
     return {
+        "slug": parsed_slug,
         "name": parsed_name,
         "description": parsed_desc,
         "tool_dependencies": normalize_string_list(meta.get("tool_dependencies")),
@@ -641,19 +658,19 @@ async def _stage_skill_draft_item(
     item_dir = draft_items_dir / item_id
     shutil.copytree(source_skill_dir, item_dir, symlinks=False)
     parsed = _parse_skill_dir_metadata(item_dir)
-    final_slug = await _generate_available_slug(repo, parsed["name"])
+    final_slug = await _generate_available_slug(repo, parsed["slug"])
     return {
         "draft_item_id": item_id,
         "source_dir": f"items/{item_id}",
         "slug": final_slug,
-        "name": final_slug,
-        "original_name": parsed["name"],
+        "name": parsed["name"],
+        "original_name": parsed["slug"],
         "description": parsed["description"],
         "tool_dependencies": parsed["tool_dependencies"],
         "mcp_dependencies": parsed["mcp_dependencies"],
         "skill_dependencies": parsed["skill_dependencies"],
-        "warnings": [f"原始名称 {parsed['name']} 已存在，将安装为 {final_slug}"]
-        if final_slug != parsed["name"]
+        "warnings": [f"原始 slug {parsed['slug']} 已存在，将安装为 {final_slug}"]
+        if final_slug != parsed["slug"]
         else [],
         "success": True,
     }
@@ -683,14 +700,14 @@ async def _import_skill_dir_impl(
     repo = SkillRepository(db)
     skills_root = get_skills_root_dir()
     parsed = _parse_skill_dir_metadata(source_skill_dir)
-    final_slug = await _generate_available_slug(repo, parsed["name"])
+    final_slug = await _generate_available_slug(repo, parsed["slug"])
     with tempfile.TemporaryDirectory(prefix=".skill-import-", dir=str(skills_root.parent)) as temp_root:
         stage_dir = Path(temp_root) / "stage"
         shutil.copytree(source_skill_dir, stage_dir)
 
-        if final_slug != parsed["name"]:
+        if final_slug != parsed["slug"]:
             content = (stage_dir / "SKILL.md").read_text(encoding="utf-8")
-            (stage_dir / "SKILL.md").write_text(_rewrite_frontmatter_name(content, final_slug), encoding="utf-8")
+            (stage_dir / "SKILL.md").write_text(_rewrite_frontmatter_slug(content, final_slug), encoding="utf-8")
 
         temp_target = skills_root / f".{final_slug}.tmp-{uuid.uuid4().hex[:8]}"
         if temp_target.exists():
@@ -706,7 +723,7 @@ async def _import_skill_dir_impl(
         try:
             item = await repo.create(
                 slug=final_slug,
-                name=final_slug,
+                name=parsed["name"],
                 description=parsed["description"],
                 source_type=source_type,
                 tool_dependencies=parsed["tool_dependencies"],
@@ -942,9 +959,9 @@ async def confirm_skill_install_draft(
             with tempfile.TemporaryDirectory(prefix=".skill-confirm-", dir=str(skills_root.parent)) as temp_root:
                 stage_dir = Path(temp_root) / "stage"
                 shutil.copytree(source_dir, stage_dir)
-                if parsed["name"] != slug:
+                if parsed["slug"] != slug:
                     content = (stage_dir / "SKILL.md").read_text(encoding="utf-8")
-                    (stage_dir / "SKILL.md").write_text(_rewrite_frontmatter_name(content, slug), encoding="utf-8")
+                    (stage_dir / "SKILL.md").write_text(_rewrite_frontmatter_slug(content, slug), encoding="utf-8")
 
                 temp_target = skills_root / f".{slug}.tmp-{uuid.uuid4().hex[:8]}"
                 shutil.move(str(stage_dir), str(temp_target))
@@ -958,7 +975,7 @@ async def confirm_skill_install_draft(
                 try:
                     item = await repo.create(
                         slug=slug,
-                        name=slug,
+                        name=parsed["name"],
                         description=parsed["description"],
                         source_type=source_type,
                         tool_dependencies=parsed["tool_dependencies"],
@@ -1135,9 +1152,9 @@ async def _update_skill_metadata_if_skills_md(
 ) -> None:
     """如果目标文件是 SKILL.md，则解析并更新元数据"""
     if target.name == "SKILL.md" and target.parent == skill_dir:
-        parsed_name, parsed_desc, _ = _parse_skill_markdown(content)
-        if parsed_name != item.slug:
-            raise ValueError("SKILL.md frontmatter.name 必须与 skill slug 一致")
+        parsed_slug, parsed_name, parsed_desc, _ = _parse_skill_markdown(content)
+        if parsed_slug != item.slug:
+            raise ValueError("SKILL.md frontmatter.slug 必须与 skill slug 一致")
         repo = SkillRepository(db)
         await repo.update_metadata(item, name=parsed_name, description=parsed_desc, updated_by=updated_by)
 
@@ -1267,14 +1284,14 @@ def list_builtin_skill_specs() -> list[dict[str, Any]]:
             raise ValueError(f"内置 skill 缺少 SKILL.md: {source_dir}")
 
         content = skill_md.read_text(encoding="utf-8")
-        parsed_name, parsed_desc, meta = _parse_skill_markdown(content)
-        if parsed_name != slug:
-            raise ValueError(f"内置 skill frontmatter.name 必须等于 slug: {slug}")
+        parsed_slug, parsed_name, parsed_desc, meta = _parse_skill_markdown(content)
+        if parsed_slug != slug:
+            raise ValueError(f"内置 skill frontmatter.slug 必须等于 slug: {slug}")
 
         specs.append(
             {
                 "slug": slug,
-                "name": slug,
+                "name": parsed_name,
                 "description": configured_description or parsed_desc,
                 "version": version,
                 "tool_dependencies": configured_tools or normalize_string_list(meta.get("tool_dependencies")),

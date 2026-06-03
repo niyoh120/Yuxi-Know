@@ -77,7 +77,8 @@ my-awesome-skill/
 
 ```markdown
 ---
-name: my-awesome-skill
+name: My Awesome Skill
+slug: my-awesome-skill
 description: 这是一个用于处理特定任务的技能
 ---
 
@@ -99,7 +100,8 @@ description: 这是一个用于处理特定任务的技能
 
 | 字段 | 必填 | 说明 |
 |------|------|------|
-| `name` | 是 | Skill 名称，必须是小写字母、数字、短横线的组合（如 `my-skill`） |
+| `name` | 是 | Skill 展示名称，可使用更易读的名称（如 `Word / DOCX`） |
+| `slug` | 否 | Skill 唯一标识，必须是小写字母、数字、短横线的组合，且不能连续短横线（如 `my-skill`）。未填写时兼容旧格式，系统会使用 `name` 作为 slug，此时 `name` 也必须满足 slug 规则 |
 | `description` | 是 | Skill 的功能描述，会在 Agent 配置时展示 |
 
 ### 导入 Skill
@@ -237,9 +239,10 @@ Skills 管理采用基于角色的权限控制：
 
 ### Skill 命名规范
 
-- 使用小写字母、数字和短横线
-- 具有描述性，如 `weather-query`、`sql-reporter`
-- 避免过长的名称
+- `slug` 使用小写字母、数字和短横线，不能连续短横线
+- `slug` 应具有描述性，如 `weather-query`、`sql-reporter`
+- `name` 用于展示，可比 `slug` 更自然，例如 `Word / DOCX`
+- 避免过长的 `name` 和 `slug`
 
 ### 依赖管理建议
 
