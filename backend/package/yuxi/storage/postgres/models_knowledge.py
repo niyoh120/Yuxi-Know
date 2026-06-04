@@ -241,6 +241,7 @@ class EvaluationRun(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     run_id = Column(String(64), unique=True, nullable=False, index=True)
+    name = Column(String(255), nullable=False)
     kb_id = Column(String(80), ForeignKey("knowledge_bases.kb_id", ondelete="CASCADE"), nullable=False, index=True)
     dataset_id = Column(
         String(64),

@@ -38,6 +38,15 @@
                   </div>
 
                   <div class="dropdown-model-fields">
+                    <a-form-item label="评估名称">
+                      <a-input
+                        v-model:value="configForm.name"
+                        placeholder="请输入评估名称"
+                        :maxlength="100"
+                        show-count
+                      />
+                    </a-form-item>
+
                     <a-form-item label="评估基准">
                       <div class="dropdown-benchmark-row">
                         <a-select
@@ -126,12 +135,13 @@
               </div>
               <div class="last-evaluation-info">
                 <div class="last-evaluation-title">
-                  {{ getDatasetName(latestEvaluation.dataset_id) }}
+                  {{ getRunName(latestEvaluation) }}
                   <a-tag :color="getStatusColor(latestEvaluation.status)" :bordered="false">
                     {{ getStatusText(latestEvaluation.status) }}
                   </a-tag>
                 </div>
                 <div class="last-evaluation-meta">
+                  {{ getDatasetName(latestEvaluation.dataset_id) }} ·
                   {{ formatTime(latestEvaluation.started_at) }} ·
                   <button
                     v-if="latestEvaluation.status === 'completed'"
@@ -244,9 +254,7 @@
     <div v-if="resultModalVisible" class="evaluation-detail-overlay">
       <div class="evaluation-detail-panel">
         <div class="evaluation-detail-titlebar">
-          <div class="evaluation-detail-title">
-            评估结果 - {{ selectedResult?.run_id?.slice(0, 8) || '' }}
-          </div>
+          <div class="evaluation-detail-title">评估结果 - {{ getRunName(selectedResult) }}</div>
           <a-button
             type="text"
             size="small"
@@ -487,8 +495,29 @@ const isDatasetCompleted = (dataset) =>
 
 const latestEvaluation = computed(() => evaluationHistory.value[0] || null)
 
+const createDefaultNameHash = () => {
+  const cryptoApi = globalThis.crypto
+  if (cryptoApi?.getRandomValues) {
+    const values = new Uint32Array(1)
+    cryptoApi.getRandomValues(values)
+    return values[0].toString(16).padStart(6, '0').slice(0, 6)
+  }
+  return Math.floor(Math.random() * 0xffffff)
+    .toString(16)
+    .padStart(6, '0')
+}
+
+const buildDefaultEvaluationName = () => {
+  const now = new Date()
+  const year = now.getFullYear()
+  const month = String(now.getMonth() + 1).padStart(2, '0')
+  const day = String(now.getDate()).padStart(2, '0')
+  return `eval-${year}${month}${day}-${createDefaultNameHash()}`
+}
+
 // 评估配置表单（使用知识库默认配置）
 const configForm = reactive({
+  name: buildDefaultEvaluationName(),
   answer_llm: '', // 答案生成模型
   judge_llm: '' // 评判模型
 })
@@ -591,11 +620,12 @@ const withResizableTitle = (column) => ({
 
 const historyColumns = [
   {
-    title: '开始时间',
-    dataIndex: 'started_at',
-    key: 'started_at',
-    width: 160,
-    customRender: ({ record }) => formatTime(record.started_at)
+    title: '评估名称',
+    dataIndex: 'name',
+    key: 'name',
+    width: 180,
+    ellipsis: true,
+    customRender: ({ record }) => getRunName(record)
   },
   {
     title: '评估基准',
@@ -820,9 +850,14 @@ const startEvaluation = async () => {
   const judgeModel = selectedDataset.value.has_gold_answers ? configForm.judge_llm : ''
   const hasAnswerModel = !!answerModel
   const hasJudgeModel = !!judgeModel
+  const runName = configForm.name.trim()
 
   if (hasAnswerModel !== hasJudgeModel) {
     message.warning('生成模型和评估模型必须同时选择或者同时不选择')
+    return
+  }
+  if (!runName) {
+    message.warning('请输入评估名称')
     return
   }
 
@@ -830,6 +865,7 @@ const startEvaluation = async () => {
 
   const params = {
     dataset_id: selectedDataset.value.dataset_id,
+    name: runName,
     model_config: {
       answer_llm: answerModel,
       judge_llm: judgeModel
@@ -842,6 +878,7 @@ const startEvaluation = async () => {
     if (response.message === 'success') {
       message.success('评估任务已开始')
       evaluationDropdownOpen.value = false
+      configForm.name = buildDefaultEvaluationName()
       loadEvaluationHistory()
       taskerStore.loadTasks()
     } else {
@@ -945,6 +982,7 @@ const viewResults = async (runId) => {
       // 从历史记录中找到对应的任务信息，如果没有则使用API返回的数据
       selectedResult.value = evaluationHistory.value.find((r) => r.run_id === runId) || {
         run_id: resultData.run_id,
+        name: resultData.name,
         status: resultData.status,
         started_at: resultData.started_at,
         completed_at: resultData.completed_at,
@@ -1014,6 +1052,9 @@ const getDatasetName = (datasetId) => {
   const benchmark = availableDatasets.value.find((b) => b.dataset_id === datasetId)
   return benchmark ? benchmark.name : datasetId?.slice(0, 8) || '-'
 }
+
+const getRunName = (record) =>
+  record?.name || record?.run_name || record?.run_id?.slice(0, 8) || '-'
 
 const getRecall10 = (record) => record?.metrics?.['recall@10']
 
@@ -1178,6 +1219,12 @@ const formatDuration = (seconds) => {
 }
 
 watch(evaluationHistory, syncEvaluationRefresh, { deep: true })
+
+watch(evaluationDropdownOpen, (open) => {
+  if (open) {
+    configForm.name = buildDefaultEvaluationName()
+  }
+})
 
 // 组件挂载时加载数据
 onMounted(() => {

@@ -20,9 +20,13 @@ def test_retrieval_metrics_use_metadata_chunk_id():
     assert metrics["f1@3"] == RetrievalMetrics.f1_score_at_k(["chunk_a", "chunk_b"], ["chunk_b", "chunk_c"], 3)
 
 
-def test_overall_score_keeps_existing_average_strategy():
-    score = EvaluationMetricsCalculator.calculate_overall_score(
-        [{"recall@1": 1.0, "f1@1": 0.5}], [{"score": 0.25}]
-    )
+def test_overall_score_uses_retrieval_metrics_only():
+    score = EvaluationMetricsCalculator.calculate_overall_score([{"recall@1": 1.0, "f1@1": 0.5}], [{"score": 0.25}])
 
-    assert score == 0.5
+    assert score == 0.75
+
+
+def test_overall_score_returns_none_without_retrieval_metrics():
+    score = EvaluationMetricsCalculator.calculate_overall_score([], [{"score": 1.0}])
+
+    assert score is None

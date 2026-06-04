@@ -34,6 +34,7 @@ class GenerateDatasetRequest(BaseModel):
 
 class RunEvaluationRequest(BaseModel):
     dataset_id: str = Field(..., min_length=1)
+    name: str | None = Field(default=None, min_length=1, max_length=100)
     retrieval_config: dict[str, Any] = Field(default_factory=dict, alias="model_config")
 
 
@@ -176,6 +177,7 @@ async def run_evaluation(kb_id: str, request: RunEvaluationRequest, current_user
         run_id = await service.run_evaluation(
             kb_id=kb_id,
             dataset_id=request.dataset_id,
+            name=request.name,
             model_config=request.retrieval_config,
             created_by=current_user.uid,
         )

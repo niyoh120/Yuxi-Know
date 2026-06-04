@@ -118,7 +118,7 @@ def aggregate_metrics(
     answer_metrics_list: list[dict[str, Any]],
     *,
     include_overall_score: bool = False,
-) -> tuple[dict[str, Any], float]:
+) -> tuple[dict[str, Any], float | None]:
     overall_metrics = {}
 
     if retrieval_metrics_list:

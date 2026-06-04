@@ -131,24 +131,13 @@ class EvaluationMetricsCalculator:
     @staticmethod
     def calculate_overall_score(
         retrieval_metrics_list: list[dict[str, float]], answer_metrics_list: list[dict[str, Any]]
-    ) -> float:
-        """计算整体平均分"""
-        total_score = 0.0
-        count = 0
-
-        # 简单的平均策略：将所有retrieval metric的值和answer metric的score一起平均
-        # 用户可能希望分开看，但calculate_overall_score返回一个单值。
+    ) -> float | None:
+        """计算整体平均分，只聚合检索指标。"""
+        retrieval_scores = []
 
         # 计算检索平均分
         for m in retrieval_metrics_list:
             if m:
-                total_score += sum(m.values()) / len(m)
-                count += 1
+                retrieval_scores.append(sum(m.values()) / len(m))
 
-        # 计算答案平均分
-        for m in answer_metrics_list:
-            if "score" in m:
-                total_score += m["score"]
-                count += 1
-
-        return total_score / count if count > 0 else 0.0
+        return sum(retrieval_scores) / len(retrieval_scores) if retrieval_scores else None

@@ -20,6 +20,14 @@ from yuxi.utils import logger
 from yuxi.utils.datetime_utils import format_utc_datetime, utc_now_naive
 
 
+def build_evaluation_run_name(started_at=None, hash_value: str | None = None) -> str:
+    date_part = (started_at or utc_now_naive()).strftime("%Y%m%d")
+    hash_part = re.sub(r"[^a-fA-F0-9]", "", hash_value or uuid.uuid4().hex).lower()[:6]
+    if len(hash_part) < 6:
+        hash_part = (hash_part + uuid.uuid4().hex)[:6]
+    return f"eval-{date_part}-{hash_part}"
+
+
 class EvaluationService:
     """RAG评估服务"""
 
@@ -69,6 +77,18 @@ class EvaluationService:
         return metrics.get("score", 1.0) <= 0.5 or any(
             metrics.get(key, 1.0) < 0.3 for key in metrics if key.startswith("recall@")
         )
+
+    def _normalize_run_name(self, name: str | None, run_id: str) -> str:
+        run_name = (name or "").strip()
+        if run_name:
+            return run_name
+        return build_evaluation_run_name(hash_value=run_id.removeprefix("run_"))
+
+    def _run_name_from_row(self, row) -> str:
+        name = (getattr(row, "name", None) or "").strip()
+        if name:
+            return name
+        return build_evaluation_run_name(row.started_at, hash_value=row.run_id.removeprefix("run_"))
 
     async def _sync_dataset_build_metadata(self, row) -> None:
         metadata = dict(row.build_metadata or {})
@@ -419,10 +439,16 @@ class EvaluationService:
             raise
 
     async def run_evaluation(
-        self, kb_id: str, dataset_id: str, model_config: dict[str, Any] = None, created_by: str = "system"
+        self,
+        kb_id: str,
+        dataset_id: str,
+        name: str | None = None,
+        model_config: dict[str, Any] = None,
+        created_by: str = "system",
     ) -> str:
         try:
             run_id = f"run_{uuid.uuid4().hex[:8]}"
+            run_name = self._normalize_run_name(name, run_id)
             dataset_row = await self.eval_repo.get_dataset(dataset_id)
             if dataset_row is None or dataset_row.kb_id != kb_id:
                 raise ValueError("Dataset not found")
@@ -448,6 +474,7 @@ class EvaluationService:
             await self.eval_repo.create_run(
                 {
                     "run_id": run_id,
+                    "name": run_name,
                     "kb_id": kb_id,
                     "dataset_id": dataset_id,
                     "status": "running",
@@ -463,10 +490,11 @@ class EvaluationService:
             )
 
             await tasker.enqueue(
-                name=f"RAG评估({dataset_row.name})",
+                name=f"RAG评估({run_name})",
                 task_type="rag_evaluation",
                 payload={
                     "run_id": run_id,
+                    "name": run_name,
                     "kb_id": kb_id,
                     "dataset_id": dataset_id,
                     "retrieval_config": retrieval_config,
@@ -614,6 +642,7 @@ class EvaluationService:
             for row in rows:
                 run = {
                     "run_id": row.run_id,
+                    "name": self._run_name_from_row(row),
                     "dataset_id": row.dataset_id,
                     "status": row.status,
                     "started_at": format_utc_datetime(row.started_at),
@@ -669,6 +698,7 @@ class EvaluationService:
             paged_items = [self._run_item_to_dict(item) for item in details]
         return {
             "run_id": row.run_id,
+            "name": self._run_name_from_row(row),
             "status": row.status,
             "started_at": format_utc_datetime(row.started_at),
             "completed_at": format_utc_datetime(row.completed_at),
