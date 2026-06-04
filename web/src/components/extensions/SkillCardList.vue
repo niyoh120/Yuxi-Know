@@ -30,6 +30,15 @@
               <span>上传 Skill</span>
             </a-button>
           </a-upload>
+          <a-button
+            :href="SKILLS_DOC_URL"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="lucide-icon-btn"
+          >
+            <ExternalLink :size="14" />
+            <span>安装文档</span>
+          </a-button>
           <a-tooltip title="刷新 Skills" placement="bottom">
             <a-button class="lucide-icon-btn" :disabled="loading" @click="fetchSkills">
               <RefreshCw :size="14" />
@@ -55,7 +64,7 @@
     </PageShoulder>
 
     <div
-      v-if="filteredInstalledSkills.length === 0"
+      v-if="visibleSkillGroups.length === 0"
       class="extension-card-grid-empty-state skill-empty-state"
     >
       <div class="skill-empty-card">
@@ -76,53 +85,73 @@
     </div>
 
     <template v-else>
-      <template v-for="group in skillGroups" :key="group.key">
-        <template v-if="group.skills.length">
-          <div class="extension-section-header">{{ group.title }}</div>
-          <ExtensionCardGrid :min-width="360">
-            <div
-              v-for="skill in group.skills"
-              :key="skill.slug"
-              class="card-wrapper"
-              :class="{
-                selected: selectedCardSlugs.includes(skill.slug),
-                'batch-mode': isBatchDeleteMode
-              }"
+      <template v-for="group in visibleSkillGroups" :key="group.key">
+        <div class="extension-section-header">{{ group.title }}</div>
+        <ExtensionCardGrid :min-width="360">
+          <div
+            v-for="skill in group.skills"
+            :key="`${group.key}:${skill.slug}`"
+            class="card-wrapper"
+            :class="{
+              selected: !skill.isRecommendation && selectedCardSlugs.includes(skill.slug),
+              'batch-mode': isBatchDeleteMode && !skill.isRecommendation
+            }"
+          >
+            <a-checkbox
+              v-if="
+                !skill.isRecommendation &&
+                isBatchDeleteMode &&
+                canManageSkill(skill) &&
+                skill.sourceType !== 'builtin'
+              "
+              :checked="selectedCardSlugs.includes(skill.slug)"
+              @change="handleToggleCardSelect(skill.slug)"
+              class="card-select-checkbox"
+            />
+            <InfoCard
+              variant="mini"
+              :title="formatExtensionCardTitle(skill.name)"
+              :description="skill.description || '暂无描述'"
+              :default-icon="BookMarkedIcon"
+              @click="handleCardClick(skill)"
+              :class="{ 'card-clickable-select': isBatchDeleteMode && !skill.isRecommendation }"
             >
-              <a-checkbox
-                v-if="isBatchDeleteMode && canManageSkill(skill) && skill.sourceType !== 'builtin'"
-                :checked="selectedCardSlugs.includes(skill.slug)"
-                @change="handleToggleCardSelect(skill.slug)"
-                class="card-select-checkbox"
-              />
-              <InfoCard
-                variant="mini"
-                :title="formatExtensionCardTitle(skill.name)"
-                :description="skill.description || '暂无描述'"
-                :default-icon="BookMarkedIcon"
-                @click="handleCardClick(skill)"
-                :class="{ 'card-clickable-select': isBatchDeleteMode }"
-              >
-                <template #action>
-                  <button
-                    type="button"
-                    class="skill-enabled-action"
-                    :class="{ enabled: skill.enabled !== false }"
-                    :disabled="!canManageSkill(skill) || isSkillToggling(skill.slug)"
-                    :aria-label="skill.enabled === false ? '启用 Skill' : '禁用 Skill'"
-                    @click.stop="handleToggleSkillEnabled(skill)"
-                  >
-                    <Plus v-if="skill.enabled === false" :size="15" class="action-icon" />
-                    <template v-else>
-                      <Check :size="15" class="action-icon action-icon-check" />
-                      <Minus :size="15" class="action-icon action-icon-minus" />
-                    </template>
-                  </button>
-                </template>
-              </InfoCard>
-            </div>
-          </ExtensionCardGrid>
-        </template>
+              <template #action>
+                <button
+                  v-if="skill.isRecommendation"
+                  type="button"
+                  class="skill-enabled-action"
+                  :class="{ loading: isRecommendedSkillInstalling(skill.source) }"
+                  :disabled="isRecommendedSkillInstallDisabled(skill.source)"
+                  aria-label="安装推荐 Skill"
+                  @click.stop="handleRecommendedSkillInstall(skill)"
+                >
+                  <LoaderCircle
+                    v-if="isRecommendedSkillInstalling(skill.source)"
+                    :size="15"
+                    class="action-icon action-icon-spin"
+                  />
+                  <Plus v-else :size="15" class="action-icon" />
+                </button>
+                <button
+                  v-else
+                  type="button"
+                  class="skill-enabled-action"
+                  :class="{ enabled: skill.enabled !== false }"
+                  :disabled="!canManageSkill(skill) || isSkillToggling(skill.slug)"
+                  :aria-label="skill.enabled === false ? '启用 Skill' : '禁用 Skill'"
+                  @click.stop="handleToggleSkillEnabled(skill)"
+                >
+                  <Plus v-if="skill.enabled === false" :size="15" class="action-icon" />
+                  <template v-else>
+                    <Check :size="15" class="action-icon action-icon-check" />
+                    <Minus :size="15" class="action-icon action-icon-minus" />
+                  </template>
+                </button>
+              </template>
+            </InfoCard>
+          </div>
+        </ExtensionCardGrid>
       </template>
     </template>
 
@@ -581,7 +610,9 @@ import {
   Trash2,
   Check,
   Plus,
-  Minus
+  Minus,
+  ExternalLink,
+  LoaderCircle
 } from 'lucide-vue-next'
 import { skillApi } from '@/apis/skill_api'
 import ExtensionCardGrid from './ExtensionCardGrid.vue'
@@ -592,6 +623,44 @@ import MarkdownPreview from '@/components/common/MarkdownPreview.vue'
 import { formatExtensionCardTitle } from '@/utils/extensionDisplayName'
 
 const BookMarkedIcon = BookMarked
+const SKILLS_DOC_URL = 'https://xerrors.github.io/Yuxi/agents/skills-management.html'
+const RECOMMENDED_SKILLS = [
+  {
+    slug: 'skill-creator',
+    name: 'skill-creator',
+    description: '创建、维护和改进 Agent Skill。',
+    source: 'https://modelscope.cn/skills/@anthropics/skill-creator',
+    aliases: ['skill-creator', 'Skill Creator']
+  },
+  {
+    slug: 'frontend-design',
+    name: 'frontend-design',
+    description: '面向前端界面与交互设计的实现建议。',
+    source: 'https://modelscope.cn/skills/@anthropics/frontend-design',
+    aliases: ['frontend-design', 'Frontend Design']
+  },
+  {
+    slug: 'docx',
+    name: 'docx',
+    description: '读取、编辑和生成 Word DOCX 文档。',
+    source: 'https://modelscope.cn/skills/@anthropics/docx',
+    aliases: ['docx', 'DOCX']
+  },
+  {
+    slug: 'xlsx',
+    name: 'xlsx',
+    description: '读取、编辑和生成 Excel XLSX 表格。',
+    source: 'https://modelscope.cn/skills/@anthropics/xlsx',
+    aliases: ['xlsx', 'XLSX']
+  },
+  {
+    slug: 'pdf',
+    name: 'pdf',
+    description: '读取、分析和处理 PDF 文件。',
+    source: 'https://modelscope.cn/skills/@anthropics/pdf',
+    aliases: ['pdf', 'PDF']
+  }
+]
 
 const router = useRouter()
 
@@ -613,6 +682,7 @@ const skillPreviewLoading = ref(false)
 const skillPreviewError = ref('')
 const deletingPreviewSkill = ref(false)
 let previewRequestSeq = 0
+const installingRecommendedSources = ref([])
 
 const remoteInstallModalVisible = ref(false)
 const activeTab = ref('repo') // 'repo' 或 'search'
@@ -645,7 +715,8 @@ const shareConfigFormRef = ref(null)
 const matchesSearch = (skill) => {
   if (!searchQuery.value) return true
   const q = searchQuery.value.toLowerCase()
-  return skill.name.toLowerCase().includes(q) || skill.slug.toLowerCase().includes(q)
+  const text = [skill.name, skill.slug, skill.description].filter(Boolean).join(' ').toLowerCase()
+  return text.includes(q)
 }
 
 const installedSkillCards = computed(() =>
@@ -655,8 +726,34 @@ const installedSkillCards = computed(() =>
   }))
 )
 
+const installedSkillKeys = computed(() => {
+  const keys = new Set()
+  installedSkillCards.value.forEach((skill) => {
+    const identifiers = [skill.slug, skill.name]
+    identifiers.forEach((value) => {
+      if (value) keys.add(String(value).toLowerCase())
+    })
+  })
+  return keys
+})
+
+const recommendedSkillCards = computed(() =>
+  RECOMMENDED_SKILLS.filter(
+    (skill) => !skill.aliases.some((alias) => installedSkillKeys.value.has(alias.toLowerCase()))
+  ).map((skill) => ({
+    ...skill,
+    sourceType: 'recommended',
+    isRecommendation: true
+  }))
+)
+
 const filteredInstalledSkills = computed(() => installedSkillCards.value.filter(matchesSearch))
 const skillGroups = computed(() => [
+  {
+    key: 'recommended',
+    title: '推荐',
+    skills: isBatchDeleteMode.value ? [] : recommendedSkillCards.value.filter(matchesSearch)
+  },
   {
     key: 'builtin',
     title: '内置',
@@ -668,6 +765,7 @@ const skillGroups = computed(() => [
     skills: filteredInstalledSkills.value.filter((skill) => skill.sourceType !== 'builtin')
   }
 ])
+const visibleSkillGroups = computed(() => skillGroups.value.filter((group) => group.skills.length))
 const filteredDeletableSkills = computed(() =>
   filteredInstalledSkills.value.filter(
     (skill) => canManageSkill(skill) && skill.sourceType !== 'builtin'
@@ -761,6 +859,11 @@ const sourceTypeLabel = (sourceType) => {
 
 const canManageSkill = (skill) => skill?.can_manage !== false
 const isSkillToggling = (slug) => togglingSkillSlugs.value.includes(slug)
+const isRecommendedSkillInstalling = (source) => installingRecommendedSources.value.includes(source)
+const isRecommendedSkillInstallDisabled = (source) =>
+  installingRecommendedSources.value.length > 0 ||
+  draftConfirmVisible.value ||
+  isRecommendedSkillInstalling(source)
 
 const navigateToDetail = (skill) => {
   router.push({ path: `/extensions/skill/${encodeURIComponent(skill.slug)}` })
@@ -797,6 +900,10 @@ const goToPreviewSkillManagement = () => {
 }
 
 const handleCardClick = (skill) => {
+  if (skill?.isRecommendation) {
+    if (!isBatchDeleteMode.value) handleRecommendedSkillInstall(skill)
+    return
+  }
   if (isBatchDeleteMode.value) {
     handleToggleCardSelect(skill.slug)
   } else {
@@ -1080,6 +1187,17 @@ const handleCancelInstall = () => {
   remoteInstallModalVisible.value = false
 }
 
+const rememberRemoteSource = (source) => {
+  let history = [...repoHistory.value]
+  history = history.filter((item) => item !== source)
+  history.unshift(source)
+  if (history.length > 10) {
+    history = history.slice(0, 10)
+  }
+  repoHistory.value = history
+  localStorage.setItem('yuxi_remote_repo_history', JSON.stringify(history))
+}
+
 const handleListRemoteSkills = async () => {
   const source = remoteInstallForm.source.trim()
   if (!source) {
@@ -1102,19 +1220,59 @@ const handleListRemoteSkills = async () => {
       message.success(`已发现 ${remoteSkillOptions.value.length} 个 Skills`)
     }
 
-    // 保存成功的拉取历史
-    let history = [...repoHistory.value]
-    history = history.filter((item) => item !== source)
-    history.unshift(source)
-    if (history.length > 10) {
-      history = history.slice(0, 10)
-    }
-    repoHistory.value = history
-    localStorage.setItem('yuxi_remote_repo_history', JSON.stringify(history))
+    rememberRemoteSource(source)
   } catch (error) {
     message.error(error?.response?.data?.detail || error.message || '获取远程 Skills 失败')
   } finally {
     listingRemoteSkills.value = false
+  }
+}
+
+const handleRecommendedSkillInstall = async (skill) => {
+  if (!skill?.source || isRecommendedSkillInstallDisabled(skill.source)) {
+    return
+  }
+
+  installingRecommendedSources.value.push(skill.source)
+  activeTab.value = 'repo'
+  remoteInstallForm.source = skill.source
+  remoteSkillOptions.value = []
+  selectedRepoSkills.value = []
+  repoFilterKeyword.value = ''
+
+  try {
+    const listResult = await skillApi.listRemoteSkills(skill.source)
+    const options = listResult?.data || []
+    remoteSkillOptions.value = options
+    const aliasSet = new Set(
+      (skill.aliases || [skill.slug, skill.name]).map((item) => item.toLowerCase())
+    )
+    const matchedSkill =
+      options.length === 1
+        ? options[0]
+        : options.find((item) => aliasSet.has(String(item.name || '').toLowerCase()))
+
+    if (!matchedSkill?.name) {
+      remoteInstallModalVisible.value = true
+      message.warning('已拉取推荐来源，请选择要安装的 Skill')
+      return
+    }
+
+    selectedRepoSkills.value = [matchedSkill.name]
+    rememberRemoteSource(skill.source)
+    const prepareResult = await skillApi.prepareRemoteSkills({
+      source: skill.source,
+      skills: [matchedSkill.name]
+    })
+    if (await openDraftConfirmation(prepareResult?.data)) {
+      message.success('解析完成，请确认 Skill 生效范围')
+    }
+  } catch (error) {
+    message.error(error?.response?.data?.detail || error.message || '解析推荐 Skill 失败')
+  } finally {
+    installingRecommendedSources.value = installingRecommendedSources.value.filter(
+      (source) => source !== skill.source
+    )
   }
 }
 
@@ -1354,6 +1512,11 @@ defineExpose({
     opacity: 0.45;
   }
 
+  &.loading:disabled {
+    cursor: wait;
+    opacity: 1;
+  }
+
   &.enabled {
     color: var(--color-success-700);
 
@@ -1380,6 +1543,20 @@ defineExpose({
 
 .action-icon {
   flex-shrink: 0;
+}
+
+.action-icon-spin {
+  animation: skill-action-spin 1s linear infinite;
+}
+
+@keyframes skill-action-spin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .skill-preview-panel {

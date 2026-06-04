@@ -58,6 +58,7 @@
 - [x] 将 Qwen-Image 修改为 Skill
 - [x] 现在输入区域对于不同 mention 的渲染的 ICON 和 human-message 里面的渲染的 ICON;
 - [x] 节点的颜色按照 label 的分类来
+- [ ] 添加推荐 Skill 的列表，点击可以直接安装，实际上是替代了填入搜索的名称，并触发拉取，这个似乎只需要在前端修改就可以了
 
 # bug
 
