@@ -20,7 +20,18 @@ API Key 是一种用于身份验证的密钥字符串，外部系统可以通过
 - `POST /api/user/apikey/{api_key_id}/regenerate`：重新生成密钥
 - `DELETE /api/user/apikey/{api_key_id}`：删除密钥
 
+## 确定 API 访问地址
+
+Yuxi 后端服务绑定在 `0.0.0.0:5050`，不会自动探测或对外宣告本机 IP。实际访问地址取决于部署环境：
+
+- **本地开发**：`http://localhost:5050`
+- **生产部署（Nginx 反向代理）**：`http://<服务器IP或域名>`（默认 80 端口）
+
+完整的 API 交互流程可参考自动生成的 Swagger 文档：`{base_url}/docs`。
+
 ## 接口调用方式
+
+> **关于 `agent_id` 的说明**：下文所有示例中的 `agent_id` 对应的是智能体的 **slug** 字段（如 `default-chatbot`），而非数据库自增 ID 或 `agent_config_id`。请通过 `GET /api/agent` 列表接口确认目标智能体的 slug 值。
 
 外部系统通过 HTTP 请求调用 Yuxi 接口时，需要在请求头中携带 API Key：
 
