@@ -23,6 +23,30 @@ async def health_check():
     return {"status": "ok", "message": "服务正常运行", "version": get_version()}
 
 
+@system.get("/discovery")
+async def discovery():
+    """系统能力发现接口（公开接口）"""
+    return {
+        "name": "Yuxi",
+        "version": get_version(),
+        "api_prefix": "/api",
+        "capabilities": {
+            "cli": {
+                "min_cli_version": "0.1.0",
+                "browser_login": True,
+                "api_key_auth": True,
+                "remote_config": True,
+            }
+        },
+        "endpoints": {
+            "health": "/api/system/health",
+            "auth_me": "/api/auth/me",
+            "cli_auth_sessions": "/api/auth/cli/sessions",
+            "cli_auth_authorize": "/auth/cli/authorize",
+        },
+    }
+
+
 # =============================================================================
 # === 配置管理分组 ===
 # =============================================================================
