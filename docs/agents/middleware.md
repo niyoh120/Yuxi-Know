@@ -74,6 +74,8 @@
 | `summary_prompt` | 摘要模型使用的提示词 |
 | `summary_tool_result_token_limit` | 被摘要历史中工具结果的预览 token 上限 |
 
+触发判断使用 Yuxi 自己的近似 token 计算结果，不使用模型返回的 `usage_metadata.total_tokens` 作为触发依据，避免 provider 的计费口径、累计口径或异常上报导致短对话过早压缩。
+
 触发后，中间件会把较早的消息压缩成一条 summary message，并保留最近窗口内的原始消息。对被摘要掉的历史工具结果，它不会把完整 `ToolMessage.content` 直接送进 summary prompt，而是先写入当前 Agent 可见的 `outputs/large_tool_results`，再用工具名、近似 token 数、完整结果路径和有限预览替换工具结果内容。
 
 这对知识库检索尤其重要：`query_kb`、`open_kb_document`、`find_kb_document` 等工具可能返回较长的片段、引用和文档内容。Summary 阶段保留“查过什么、结果在哪里、关键预览是什么”，同时避免把大量检索原文反复卷入摘要，减少上下文污染和 token 压力。

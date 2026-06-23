@@ -151,6 +151,41 @@ def test_create_summary_middleware_passes_custom_summary_prompt() -> None:
 
 
 @pytest.mark.unit
+def test_wrap_model_call_ignores_provider_reported_usage_for_token_trigger() -> None:
+    backend = _MemoryBackend()
+    model = _RecordingModel()
+    messages = [
+        HumanMessage(content="short user turn"),
+        AIMessage(
+            content="short answer",
+            usage_metadata={"input_tokens": 200_000, "output_tokens": 100, "total_tokens": 200_100},
+            response_metadata={"model_provider": "openai"},
+        ),
+        HumanMessage(content="next short turn"),
+    ]
+    middleware = create_summary_middleware(
+        model=model,
+        trigger=("tokens", 1_000),
+        keep=("messages", 1),
+        trim_tokens_to_summarize=None,
+    )
+    captured_messages: list | None = None
+
+    def handler(request: ModelRequest) -> ModelResponse:
+        nonlocal captured_messages
+        captured_messages = request.messages
+        return ModelResponse(result=[AIMessage(content="ok")])
+
+    middleware._backend_for_request = lambda _request: backend
+    result = middleware.wrap_model_call(_model_request(messages), handler)
+
+    assert not isinstance(result, ExtendedModelResponse)
+    assert captured_messages == messages
+    assert model.prompts == []
+    assert backend.writes == []
+
+
+@pytest.mark.unit
 def test_sanitize_messages_for_summary_only_replaces_tool_message_content() -> None:
     backend = _MemoryBackend()
     messages = _tool_messages()
@@ -384,7 +419,7 @@ def test_summary_event_reuses_original_preserved_window_on_later_calls() -> None
         AIMessage(content="", tool_calls=[{"id": "call-new", "name": "query_kb", "args": {}}]),
         ToolMessage(content=new_result, tool_call_id="call-new", name="query_kb"),
     ]
-    middleware._lc_helper._trigger_conditions = [("messages", 999)]
+    middleware._lc_helper._trigger_clauses = [{"messages": 999}]
     later_request = ModelRequest(
         model=_DummyModel(),
         messages=state_messages,

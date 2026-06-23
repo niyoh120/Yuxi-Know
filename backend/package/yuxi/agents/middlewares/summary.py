@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import re
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable
 from contextvars import ContextVar
 from typing import Any
 
@@ -13,6 +13,7 @@ from langchain.agents.middleware.summarization import ContextSize
 from langchain.agents.middleware.types import ModelRequest, ModelResponse
 from langchain.chat_models import BaseChatModel
 from langchain_core.messages import AnyMessage, ToolMessage
+from langchain_core.messages.utils import count_tokens_approximately
 
 from yuxi.agents.backends.composite import create_agent_composite_backend
 from yuxi.utils.paths import VIRTUAL_PATH_CONVERSATION_HISTORY, VIRTUAL_PATH_LARGE_TOOL_RESULTS
@@ -25,6 +26,11 @@ _SUMMARY_SANITIZED_MESSAGES: ContextVar[dict[tuple[int, ...], list[AnyMessage]] 
     "yuxi_summary_sanitized_messages",
     default=None,
 )
+
+
+def _count_tokens_for_summary_trigger(messages: Iterable[Any], **kwargs: Any) -> int:
+    kwargs.pop("use_usage_metadata_scaling", None)
+    return count_tokens_approximately(messages, use_usage_metadata_scaling=False, **kwargs)
 
 
 def _extract_text_content(content: Any) -> str:
@@ -163,6 +169,36 @@ class YuxiSummarizationMiddleware(SummarizationMiddleware):
         super().__init__(*args, **kwargs)
         self.tool_result_offload_token_limit = tool_result_offload_token_limit
 
+    def _should_summarize(self, messages: list[AnyMessage], total_tokens: int) -> bool:
+        if not self._lc_helper._trigger_clauses:
+            return False
+
+        for clause in self._lc_helper._trigger_clauses:
+            clause_met = True
+            for kind, value in clause.items():
+                if kind == "messages":
+                    if len(messages) < value:
+                        clause_met = False
+                        break
+                elif kind == "tokens":
+                    if total_tokens < value:
+                        clause_met = False
+                        break
+                elif kind == "fraction":
+                    max_input_tokens = self._get_profile_limits()
+                    if max_input_tokens is None:
+                        clause_met = False
+                        break
+                    threshold = int(max_input_tokens * value)
+                    if threshold <= 0:
+                        threshold = 1
+                    if total_tokens < threshold:
+                        clause_met = False
+                        break
+            if clause_met:
+                return True
+        return False
+
     def _sanitize_messages_for_summary(
         self,
         messages: list[AnyMessage],
@@ -266,6 +302,7 @@ def create_summary_middleware(
         "backend": create_agent_composite_backend,
         "trigger": trigger,
         "keep": keep,
+        "token_counter": _count_tokens_for_summary_trigger,
         "trim_tokens_to_summarize": trim_tokens_to_summarize,
         "tool_result_offload_token_limit": tool_result_offload_token_limit,
     }
