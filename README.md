@@ -32,7 +32,7 @@
         width="220" 
         height="64" 
         alt="7fb163d0fb02740948521dbcaf6191ea" 
-        src="https://github.com/user-attachments/assets/996fb052-5491-44e6-bb7f-f71af752b3b4"
+        src="https://github.com/user-attachments/assets/cc998135-0852-404c-8455-bd3f4f844f4d"
       />
     </td>
     <td style="padding: 8px 8px 8px 0; vertical-align: middle;">
