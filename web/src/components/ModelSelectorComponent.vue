@@ -128,6 +128,7 @@
 
 <script setup>
 import { computed, reactive, ref, watch } from 'vue'
+import { RouterLink } from 'vue-router'
 import { modelProviderApi } from '@/apis/system_api'
 import { Eye, RefreshCw, X } from 'lucide-vue-next'
 import { useModelStatus } from '@/composables/useModelStatus'

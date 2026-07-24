@@ -107,7 +107,7 @@ async def test_vector_projection_claim_and_finalize_chunk():
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_chunk_extraction_details_support_failure_samples():
+async def test_chunk_extraction_details_return_recent_failure_samples():
     pg_manager._initialized = False
     pg_manager.async_engine = None
     pg_manager.AsyncSession = None
@@ -117,6 +117,7 @@ async def test_chunk_extraction_details_support_failure_samples():
     kb_id = f"pytest_extraction_{suffix}"
     file_id = f"file_{suffix}"
     chunk_id = f"chunk_{suffix}"
+    recent_chunk_id = f"recent_chunk_{suffix}"
     repo = KnowledgeChunkRepository()
 
     try:
@@ -134,20 +135,29 @@ async def test_chunk_extraction_details_support_failure_samples():
                     content="failed extraction sample",
                 )
             )
+            session.add(
+                KnowledgeChunk(
+                    chunk_id=recent_chunk_id,
+                    file_id=file_id,
+                    kb_id=kb_id,
+                    chunk_index=1,
+                    content="recent failed extraction sample",
+                )
+            )
 
         await repo.mark_graph_extraction_failed(chunk_id, 3, "model timeout")
+        await repo.mark_graph_extraction_failed(recent_chunk_id, 1, "invalid response")
 
         counts = await repo.count_graph_extraction_statuses_by_kb_id(kb_id)
         samples = await repo.list_graph_extraction_failed_samples(kb_id, limit=10)
-        assert counts == {"pending": 0, "succeeded": 0, "failed": 1}
-        assert len(samples) == 1
-        assert samples[0]["chunk_id"] == chunk_id
-        assert samples[0]["file_id"] == file_id
-        assert samples[0]["content"] == "failed extraction sample"
-        assert samples[0]["details"]["status"] == "failed"
-        assert samples[0]["details"]["attempt_count"] == 3
-        assert samples[0]["details"]["last_error"] == "model timeout"
-        assert samples[0]["details"]["last_attempt_at"]
+        assert counts == {"pending": 0, "succeeded": 0, "failed": 2}
+        assert [sample["chunk_id"] for sample in samples] == [recent_chunk_id, chunk_id]
+        assert samples[1]["file_id"] == file_id
+        assert samples[1]["content"] == "failed extraction sample"
+        assert samples[1]["details"]["status"] == "failed"
+        assert samples[1]["details"]["attempt_count"] == 3
+        assert samples[1]["details"]["last_error"] == "model timeout"
+        assert samples[1]["details"]["last_attempt_at"]
 
         await repo.mark_graph_extraction_pending(chunk_id)
         await repo.update_extraction_result(
@@ -155,9 +165,15 @@ async def test_chunk_extraction_details_support_failure_samples():
             {"entities": [], "relations": [], "metadata": {"extractor_type": "llm"}},
             2,
         )
+        await repo.mark_graph_extraction_pending(recent_chunk_id)
+        await repo.update_extraction_result(
+            recent_chunk_id,
+            {"entities": [], "relations": [], "metadata": {"extractor_type": "llm"}},
+            1,
+        )
 
         counts = await repo.count_graph_extraction_statuses_by_kb_id(kb_id)
-        assert counts == {"pending": 0, "succeeded": 1, "failed": 0}
+        assert counts == {"pending": 0, "succeeded": 2, "failed": 0}
         assert await repo.list_graph_extraction_failed_samples(kb_id) == []
     finally:
         async with pg_manager.get_async_session_context() as session:

@@ -180,11 +180,12 @@
                   v-else-if="graphBuildStatus?.build_task_status === 'completed'"
                   color="green"
                   size="small"
-                  >执行完成</a-tag
                 >
-                <a-tag v-else-if="graphBuildStatus?.locked" color="green" size="small"
-                  >已配置</a-tag
-                >
+                  执行完成
+                </a-tag>
+                <a-tag v-else-if="graphBuildStatus?.locked" color="green" size="small">
+                  已配置
+                </a-tag>
                 <a-tag v-else color="orange" size="small">未配置</a-tag>
               </div>
               <a-progress
@@ -218,6 +219,7 @@
                   :tabindex="extractionFailedCount > 0 ? 0 : undefined"
                   @click="openFailedChunkSamples"
                   @keydown.enter.prevent="openFailedChunkSamples"
+                  @keydown.space.prevent="openFailedChunkSamples"
                 >
                   <span class="stat-value">{{ extractionFailedCount }}</span>
                   <span class="stat-label">抽取失败</span>
@@ -371,12 +373,7 @@
       </a-form>
     </a-modal>
 
-    <a-modal
-      v-model:open="showFailedChunkSamples"
-      title="样例 Chunk"
-      width="760px"
-      :footer="null"
-    >
+    <a-modal v-model:open="showFailedChunkSamples" title="样例 Chunk" width="760px" :footer="null">
       <div v-if="failedChunkSamplesLoading" class="failed-chunk-loading">
         <Loader2 :size="18" class="spin" />
         正在加载失败 Chunk

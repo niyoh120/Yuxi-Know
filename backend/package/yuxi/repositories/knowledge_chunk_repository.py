@@ -165,7 +165,7 @@ class KnowledgeChunkRepository:
                     await session.execute(
                         select(KnowledgeChunk)
                         .where(KnowledgeChunk.kb_id == kb_id, status == "failed")
-                        .order_by(func.random())
+                        .order_by(KnowledgeChunk.id.desc())
                         .limit(max(1, min(limit, 10)))
                     )
                 )

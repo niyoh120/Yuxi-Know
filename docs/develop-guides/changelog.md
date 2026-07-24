@@ -6,7 +6,7 @@
 
 ## v0.7.2 (current)
 
-- 优化知识图谱构建：以持续队列并发执行 LLM 抽取、结构写入和向量索引，失败自动重试并持久化进度；已有结果支持断点恢复，新增失败样例查看和向量 reconcile 接口，任务与前端分别展示抽取、结构、向量进度。
+- 优化知识图谱构建：以持续队列并发执行 LLM 抽取、结构写入和向量索引，失败自动重试并持久化进度；已有结果支持断点恢复，新增按最近 Chunk 查询失败样例和向量 reconcile 接口，任务与前端分别展示抽取、结构、向量进度，索引面板支持键盘操作。
 - HTML 辅助可视化迁移为内置 `html-preview` Skill：默认 Chatbot Prompt 不再常驻注入 `html:preview` 专属说明，Agent 改为通过统一的 Skill 描述发现并按需读取静态 HTML/CSS 的适用场景、布局和安全边界；未显式配置 Skills 的 Agent 按现有默认规则自动获得该能力，使用显式 Skills 允许列表的 Agent 需选择 `html-preview`，内置 `deep-research` 已声明依赖；保留前端既有围栏清洗、sandboxed iframe、自适应高度和流式占位行为，普通 HTML 源码继续使用 `html` 代码块。
 - 模型供应商的单个 chat 模型配置新增“模型请求参数 JSON”：管理员可为每个模型独立保存、回显、修改和清空思考参数，未配置或空对象保持原行为；运行时模型缓存会携带该配置，测试模型连接与正式聊天/Agent 调用统一在模型加载入口合并。该字段仅面向 OpenAI/OpenRouter 等 OpenAI 兼容供应商，并通过 `extra_body` 透传；出于安全考虑，顶层字段采用白名单机制，当前支持 `enable_thinking`、`thinking_budget`、`thinking`、`reasoning` 和 `reasoning_effort`，对象内部结构交由供应商校验。
 - 新增通用管理员配置 Options 模块：使用 PostgreSQL `config_options` 保存系统维护的名称、说明、受控表单参数和管理员 JSON 值，核心定义、校验、显式 `sensitive` 字段脱敏及“数据库非空值 → 环境变量”解析集中在 `config/options.py`；每个 `Option.get()` 均直接查询数据库，不建立进程内缓存，接口仅管理员可用。OCR 作为首批消费者，不再建立专用配置表或维护逐引擎启停状态；数据库密钥只显示真实首尾字符的脱敏预览，环境变量只显示配置来源。设置页不集中陈列健康状态。
